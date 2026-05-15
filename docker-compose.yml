@@ -1,0 +1,45 @@
+# Local smoke-test compose for Quest Academy
+# Mirrors the Railway architecture: Postgres + backend + frontend.
+# Ports chosen to NOT conflict with signal-desk (:3000, :8000) or bp-bot (:8400).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quest
+      POSTGRES_PASSWORD: quest
+      POSTGRES_DB: quest
+    volumes:
+      - quest_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quest"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env.local
+    ports:
+      - "8050:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - quest_static:/app/static
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8050
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  quest_pg_data:
+  quest_static:
