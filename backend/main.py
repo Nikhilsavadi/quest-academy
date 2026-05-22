@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,42 +22,17 @@ log = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # -- Alembic migrations (run in thread: sync psycopg must not block the event loop) --
-    print("STARTUP [1/4]: running alembic migrations...", flush=True)
-    try:
-        def _run_migrations():
-            from alembic.config import Config
-            from alembic import command as alembic_cmd
-            cfg = Config(str(Path(__file__).parent / "alembic.ini"))
-            cfg.set_main_option("script_location", str(Path(__file__).parent / "alembic"))
-            cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-            alembic_cmd.upgrade(cfg, "head")
-        await asyncio.to_thread(_run_migrations)
-        print("STARTUP [1/4]: alembic done", flush=True)
-        log.info("Alembic migrations applied")
-    except Exception:
-        log.exception("Alembic migrations failed (continuing)")
-
-    # -- Seed (run in thread: sync DB calls) --
-    print("STARTUP [2/4]: running seed...", flush=True)
-    try:
-        from seed import seed
-        await asyncio.to_thread(seed)
-        print("STARTUP [2/4]: seed done", flush=True)
-    except Exception:
-        log.exception("Seed failed")
-
-    # -- Scheduler --
-    print("STARTUP [3/4]: starting scheduler...", flush=True)
+    # Migrations + seed are run synchronously by start.sh before uvicorn starts.
+    # Only the APScheduler needs starting here.
+    log.info("STARTUP: starting scheduler")
     try:
         from daily_scheduler import start_scheduler
         start_scheduler(app)
-        print("STARTUP [3/4]: scheduler started", flush=True)
-        log.info("Scheduler started")
+        log.info("STARTUP: scheduler started")
     except Exception:
         log.exception("Scheduler failed to start")
 
-    print("STARTUP [4/4]: yielding to uvicorn", flush=True)
+    log.info("STARTUP: yielding to uvicorn")
     yield
 
     sched = getattr(app.state, "scheduler", None)
