@@ -19,8 +19,11 @@ COPY . .
 # Static dirs (Railway volume mounts overlay these at runtime)
 RUN mkdir -p /app/static/matrices /app/static/scans
 
+# Make the startup script executable
+RUN chmod +x start.sh
+
 ENV PORT=8000
 EXPOSE 8000
 
-# Migrations + seed run inside the FastAPI lifespan.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# start.sh runs: alembic upgrade head -> seed -> uvicorn
+CMD ["./start.sh"]
