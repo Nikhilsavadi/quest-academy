@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/child", tags=["child"])
 # ("keep playing") quests are blocked once the day's completed questions
 # would exceed this.
 DEFAULT_DAILY_CAP = 60
-EXTRA_QUEST_QUESTIONS = 10
+EXTRA_QUEST_QUESTIONS = 20
 
 
 # ── XP + Level helpers ─────────────────────────────────────────
