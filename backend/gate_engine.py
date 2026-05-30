@@ -69,9 +69,11 @@ def evaluate(db: Session, child_id: int) -> dict:
     next_belt = bp.current_belt + 1
 
     if next_belt == 1:  # Bronze
-        checklist.append(_check_subject(mastery, "Maths", 6, 0.70, 5))
+        # First belt is intentionally fast (~1–2 days) so Samihan ranks up early.
+        # Silver/Gold/Plat keep their stiffer gates so the climb still feels earned.
+        checklist.append(_check_subject(mastery, "Maths", 3, 0.65, 3))
         # NVR + VR gates suspended for v1 (Maths-only launch)
-        checklist.append({"label": "Tables: 5 Blitz sessions", "needed": 5, "have": blitz_count, "met": blitz_count >= 5})
+        checklist.append({"label": "Tables: 2 Blitz sessions", "needed": 2, "have": blitz_count, "met": blitz_count >= 2})
 
     elif next_belt == 2:  # Silver
         checklist.append(_check_subject(mastery, "Maths", 10, 0.75, 8))
