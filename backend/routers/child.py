@@ -397,8 +397,9 @@ def complete(session_id: int, db: DB = Depends(get_db)):
     if sess.session_type == "belt_exam":
         total = len(questions)
         threshold = 0.80 if (sess.difficulty in ("starter", "challenge")) else 0.85
-        if (bp and bp.exam_unlocked_belt and bp.exam_unlocked_belt == 5):
-            threshold = 0.90
+        # Top-tier belts ramp the pass bar — each rarer rank demands a tighter exam.
+        if bp and bp.exam_unlocked_belt:
+            threshold = {5: 0.90, 6: 0.92, 7: 0.94, 8: 0.96}.get(bp.exam_unlocked_belt, threshold)
         passed = total > 0 and (score / total) >= threshold
         attempt = BeltExam(
             child_id=child.id,
@@ -412,12 +413,15 @@ def complete(session_id: int, db: DB = Depends(get_db)):
             bp.current_belt = new_belt
             bp.exam_unlocked_belt = None
             # XP bonus per belt
-            bonus = {1: 200, 2: 350, 3: 500, 4: 750, 5: 1000}.get(new_belt, 0)
+            bonus = {1: 200, 2: 350, 3: 500, 4: 750, 5: 1000,
+                     6: 1500, 7: 2500, 8: 5000}.get(new_belt, 0)
             total_session_xp += bonus
             # Theme + avatar items
             avu = db.query(AvatarUnlocks).filter_by(child_id=child.id).first()
-            theme_map = {1: "gold", 2: "silver", 3: "royal", 4: "midnight", 5: "elite"}
-            item_map = {1: "bronze_badge", 2: "silver_cape", 3: "trophy", 4: "diamond", 5: "gold_crown"}
+            theme_map = {1: "gold", 2: "silver", 3: "royal", 4: "midnight", 5: "elite",
+                         6: "diamond", 7: "mythic", 8: "legend"}
+            item_map = {1: "bronze_badge", 2: "silver_cape", 3: "trophy", 4: "diamond", 5: "gold_crown",
+                        6: "diamond_crown", 7: "mythic_star", 8: "dragon_emblem"}
             if avu:
                 avu.theme = theme_map.get(new_belt, avu.theme)
                 avu.unlocked_items = list({*avu.unlocked_items, item_map.get(new_belt, "")})

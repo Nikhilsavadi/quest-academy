@@ -1,4 +1,4 @@
-const BELT_ICONS = ['🎓', '🥉', '🥈', '🥇', '💎', '🏆']
+const BELT_ICONS = ['🎓', '🥉', '🥈', '🥇', '💎', '🏆', '💠', '🌟', '🐉']
 
 export default function BeltProgress({ belt }) {
   if (!belt) return null

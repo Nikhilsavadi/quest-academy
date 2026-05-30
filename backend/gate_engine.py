@@ -9,7 +9,10 @@ from models import (
 )
 
 
-BELT_NAMES = ["Unranked", "Bronze", "Silver", "Gold", "Platinum", "Elite Scholar"]
+BELT_NAMES = [
+    "Unranked", "Bronze", "Silver", "Gold", "Platinum", "Elite Scholar",
+    "Diamond Mind", "Mythic", "Legend",
+]
 
 
 def _topic_qualifies(row: TopicMastery, min_acc: float, min_attempts: int, difficulty: str | None = None) -> bool:
@@ -111,10 +114,37 @@ def evaluate(db: Session, child_id: int) -> dict:
         sims = db.query(DBSession).filter_by(child_id=child_id, session_type="exam_sim", status="completed").count()
         checklist.append({"label": "3 Exam Simulator papers ≥90%", "have": sims, "needed": 3, "met": sims >= 3})
 
+    elif next_belt in (6, 7, 8):  # Diamond Mind / Mythic / Legend
+        # Gates above Elite use ONLY existing infra (TopicMastery, streak, total XP).
+        # They escalate accuracy floor, streak length, and total-XP floor at each
+        # tier so they remain reachable without mock/sim plumbing.
+        tier_spec = {
+            6: {"acc": 0.92, "streak":  60, "total_xp":  8000},
+            7: {"acc": 0.95, "streak": 120, "total_xp": 15000},
+            8: {"acc": 0.98, "streak": 200, "total_xp": 25000},
+        }[next_belt]
+        good = [r for r in mastery if r.subject == "Maths" and r.accuracy >= tier_spec["acc"]]
+        total_expected = len(TOPICS["Maths"])
+        pct = int(tier_spec["acc"] * 100)
+        checklist.append({
+            "label": f"All Maths topics ≥{pct}% acc",
+            "have": len(good), "needed": total_expected,
+            "met": len(good) >= total_expected,
+        })
+        checklist.append({
+            "label": f"{tier_spec['streak']}-day streak ever",
+            "met": longest >= tier_spec["streak"], "value": longest,
+        })
+        checklist.append({
+            "label": f"{tier_spec['total_xp']:,} total XP",
+            "have": prog.total_xp, "needed": tier_spec["total_xp"],
+            "met": prog.total_xp >= tier_spec["total_xp"],
+        })
+
     all_met = bool(checklist) and all(c["met"] for c in checklist)
     bp.gate_progress = {"checklist": checklist, "belt_target": next_belt}
 
-    if all_met and bp.exam_unlocked_belt != next_belt and next_belt <= 5:
+    if all_met and bp.exam_unlocked_belt != next_belt and next_belt <= 8:
         bp.exam_unlocked_belt = next_belt
         # Notify parent
         parent_id = _parent_id_for_child(db, child_id)
@@ -141,8 +171,8 @@ def evaluate(db: Session, child_id: int) -> dict:
     return {
         "current_belt": bp.current_belt,
         "current_belt_name": BELT_NAMES[bp.current_belt],
-        "next_belt": next_belt if next_belt <= 5 else None,
-        "next_belt_name": BELT_NAMES[next_belt] if next_belt <= 5 else None,
+        "next_belt": next_belt if next_belt <= 8 else None,
+        "next_belt_name": BELT_NAMES[next_belt] if next_belt <= 8 else None,
         "checklist": checklist,
         "exam_unlocked": bp.exam_unlocked_belt == next_belt,
         "all_met": all_met,
