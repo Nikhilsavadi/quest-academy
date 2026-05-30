@@ -19,6 +19,7 @@ export default function Quest() {
   const [hintUsed, setHintUsed] = useState({})
   const [done, setDone] = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
+  const [loadingNext, setLoadingNext] = useState(false)
   const startedAt = useRef(Date.now())
   const questStart = useRef(Date.now())
 
@@ -83,8 +84,6 @@ export default function Quest() {
     setHint(r.hint)
     setHintUsed({ ...hintUsed, [q.id]: true })
   }
-
-  const [loadingNext, setLoadingNext] = useState(false)
 
   const complete = async () => {
     const r = await childApi.complete(id)
