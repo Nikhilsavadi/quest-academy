@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/child", tags=["child"])
 # Per-day question ceiling, mirrors DailyLimit.cap model default. Extra
 # ("keep playing") quests are blocked once the day's completed questions
 # would exceed this.
-DEFAULT_DAILY_CAP = 60
+DEFAULT_DAILY_CAP = 100
 EXTRA_QUEST_QUESTIONS = 20
 
 

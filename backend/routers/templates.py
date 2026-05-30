@@ -125,8 +125,9 @@ def assign_from_template(body: AssignFromTemplateIn, db: DB = Depends(get_db)):
         raise HTTPException(400, "Daily quest must be done first")
     dl = db.query(DailyLimit).filter_by(child_id=child.id, date=today).first()
     used = dl.questions_completed if dl else 0
-    if used + body.questions_count > 60:
-        raise HTTPException(400, f"Daily 60-question cap would be exceeded")
+    from routers.child import DEFAULT_DAILY_CAP
+    if used + body.questions_count > DEFAULT_DAILY_CAP:
+        raise HTTPException(400, f"Daily {DEFAULT_DAILY_CAP}-question cap would be exceeded")
 
     sess = DBSession(
         child_id=child.id, subject=tpl.subject, difficulty=tpl.difficulty,

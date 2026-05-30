@@ -135,7 +135,7 @@ class DailyLimit(Base):
     child_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     questions_completed: Mapped[int] = mapped_column(Integer, default=0)
-    cap: Mapped[int] = mapped_column(Integer, default=60)
+    cap: Mapped[int] = mapped_column(Integer, default=100)
 
 
 class BeltProgress(Base):
