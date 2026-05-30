@@ -29,6 +29,7 @@ def _topic_qualifies(row: TopicMastery, min_acc: float, min_attempts: int, diffi
 def _check_subject(rows: list[TopicMastery], subject: str, count_needed: int, min_acc: float, min_attempts: int) -> dict:
     qualifying = [r for r in rows if r.subject == subject and r.attempts >= min_attempts and r.accuracy >= min_acc]
     return {
+        "label": f"{subject}: {count_needed} topics ≥{int(min_acc*100)}% acc ({min_attempts}+ attempts each)",
         "subject": subject,
         "needed": count_needed,
         "have": len(qualifying),
@@ -42,6 +43,7 @@ def _all_topics_qualify(rows: list[TopicMastery], subject: str, min_acc: float, 
     by_topic = {r.topic: r for r in rows if r.subject == subject}
     qualifying = [t for t in expected if (r := by_topic.get(t)) and r.attempts >= min_attempts and r.accuracy >= min_acc]
     return {
+        "label": f"All {subject} topics ≥{int(min_acc*100)}% acc",
         "subject": subject,
         "needed": len(expected),
         "have": len(qualifying),
