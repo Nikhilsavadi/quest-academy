@@ -23,6 +23,12 @@ from gate_engine import BELT_NAMES
 
 router = APIRouter(prefix="/api/child", tags=["child"])
 
+# Per-day question ceiling, mirrors DailyLimit.cap model default. Extra
+# ("keep playing") quests are blocked once the day's completed questions
+# would exceed this.
+DEFAULT_DAILY_CAP = 60
+EXTRA_QUEST_QUESTIONS = 10
+
 
 # ── XP + Level helpers ─────────────────────────────────────────
 LEVELS = [
@@ -66,12 +72,11 @@ def home(db: DB = Depends(get_db)):
 
     level_name, next_info = level_for_xp(prog.total_xp)
 
-    # Daily quest today
-    daily = (
-        db.query(DailyQuest)
-        .filter_by(child_id=child.id, date=today)
-        .first()
-    )
+    # Daily quest today — create on demand if the midnight cron didn't run
+    # (fresh deploy, restart, or process was down at 00:05). Returns the
+    # existing row if present, or None on a rest day.
+    from daily_scheduler import ensure_daily_quest
+    daily = ensure_daily_quest(db, child.id)
     daily_card = None
     if daily:
         sess = db.get(DBSession, daily.session_id)
@@ -109,7 +114,7 @@ def home(db: DB = Depends(get_db)):
 
     # Daily cap remaining
     dl = db.query(DailyLimit).filter_by(child_id=child.id, date=today).first()
-    cap_remaining = (dl.cap - dl.questions_completed) if dl else 25
+    cap_remaining = (dl.cap - dl.questions_completed) if dl else DEFAULT_DAILY_CAP
 
     # Rival
     rival = max_engine.get_state(db)
@@ -150,6 +155,46 @@ def home(db: DB = Depends(get_db)):
         weekly_best_xp=weekly_best,
         cap_remaining=cap_remaining,
     )
+
+
+@router.post("/extra-quest")
+def extra_quest(db: DB = Depends(get_db)):
+    """Child-initiated 'keep playing' quest. Generates a fresh bonus session
+    (full XP, feeds the Max rival) on the adaptively-picked weakest topic,
+    bounded by the per-day question cap."""
+    from daily_scheduler import ensure_daily_quest, subject_for_date, _pick_topic
+    from routers.parent import _materialise_questions
+
+    child = get_only_child(db)
+    today = date.today()
+
+    # The daily quest is the priority — it must be done before extras unlock.
+    # ensure_daily_quest returns None on a rest day, where extras are allowed.
+    daily = ensure_daily_quest(db, child.id)
+    if daily is not None and daily.status != "completed":
+        raise HTTPException(400, "Finish today's Daily Quest first.")
+
+    # Per-day question cap
+    dl = db.query(DailyLimit).filter_by(child_id=child.id, date=today).first()
+    used = dl.questions_completed if dl else 0
+    cap = dl.cap if dl else DEFAULT_DAILY_CAP
+    if used + EXTRA_QUEST_QUESTIONS > cap:
+        raise HTTPException(429, "You've smashed today's question limit — come back tomorrow!")
+
+    subject = subject_for_date(today)
+    topic = _pick_topic(db, child.id, subject)
+    tm = db.query(TopicMastery).filter_by(child_id=child.id, subject=subject, topic=topic).first()
+    difficulty = tm.current_difficulty if tm else "starter"
+
+    sess = DBSession(
+        child_id=child.id, subject=subject, difficulty=difficulty,
+        session_type="bonus", status="pending", topic=topic,
+        questions_count=EXTRA_QUEST_QUESTIONS, source="ai_generated",
+    )
+    db.add(sess); db.commit(); db.refresh(sess)
+
+    _materialise_questions(db, sess, child.id, learn_mode=False)
+    return {"session_id": sess.id, "subject": subject, "topic": topic}
 
 
 def _xp_since(db: DB, child_id: int, since: datetime) -> int:
@@ -423,6 +468,16 @@ def complete(session_id: int, db: DB = Depends(get_db)):
         max_combo=max_combo,
     )
 
+    # Motivation extras: current rank, belt, personal best on this topic
+    cur_level_name, next_info = level_for_xp(prog.total_xp) if prog else (None, None)
+    belt_name = BELT_NAMES[bp.current_belt] if bp else None
+    pb = _personal_best_for_topic(db, child.id, sess, current_score=score)
+    has_wrong = any(
+        not (a := db.query(Answer).filter_by(question_id=q.id, child_id=child.id).first())
+        or not a.is_correct
+        for q in questions if not q.is_worked_example
+    )
+
     return CompleteSessionOut(
         score=score,
         total=len(questions),
@@ -439,7 +494,47 @@ def complete(session_id: int, db: DB = Depends(get_db)):
         streak=prog.streak_days if prog else 0,
         daily_done=daily_done,
         rival=max_engine.get_state(db),
+        level=cur_level_name,
+        level_total_xp=prog.total_xp if prog else None,
+        level_next=next_info,
+        belt_name=belt_name,
+        personal_best=pb,
+        has_wrong_answers=has_wrong,
     )
+
+
+def _personal_best_for_topic(db: DB, child_id: int, sess: DBSession, current_score: int) -> dict | None:
+    """Compare current session score against prior completed sessions on the
+    same topic. Returns None if no prior attempts. Daily/bonus only."""
+    if not sess.topic or sess.session_type == "belt_exam":
+        return None
+    prior = (
+        db.query(DBSession)
+        .filter(
+            DBSession.child_id == child_id,
+            DBSession.topic == sess.topic,
+            DBSession.id != sess.id,
+            DBSession.status == "completed",
+            DBSession.session_type.in_(["daily", "bonus"]),
+        )
+        .all()
+    )
+    if not prior:
+        return None
+    best_score = 0
+    best_total = 0
+    for s in prior:
+        sc = _session_score(db, s.id)
+        if sc > best_score:
+            best_score = sc
+            best_total = db.query(Question).filter_by(session_id=s.id).count()
+    if best_total == 0:
+        return None
+    return {
+        "is_new_best": current_score > best_score,
+        "previous_best_score": best_score,
+        "previous_best_total": best_total,
+    }
 
 
 def _build_complete_response(db: DB, child_id: int, sess: DBSession) -> CompleteSessionOut:
@@ -458,6 +553,36 @@ def _build_complete_response(db: DB, child_id: int, sess: DBSession) -> Complete
         daily_done=False,
         rival=max_engine.get_state(db),
     )
+
+
+# ── Review wrong answers ───────────────────────────────────────
+@router.get("/session/{session_id}/review")
+def review_session(session_id: int, db: DB = Depends(get_db)):
+    """Returns every question this child got wrong (or skipped) in the session,
+    with the option they picked, the correct option, and the explanation."""
+    child = get_only_child(db)
+    sess = db.get(DBSession, session_id)
+    if not sess or sess.child_id != child.id:
+        raise HTTPException(404, "Session not found")
+    wrong = []
+    for q in db.query(Question).filter_by(session_id=sess.id).order_by(Question.position).all():
+        if q.is_worked_example:
+            continue
+        a = db.query(Answer).filter_by(question_id=q.id, child_id=child.id).first()
+        if a and a.is_correct:
+            continue
+        wrong.append({
+            "question_id": q.id,
+            "question_text": q.question_text,
+            "svg_content": q.svg_content,
+            "image_bank_id": q.image_bank_id,
+            "options": q.options,
+            "picked_index": a.selected_index if a else None,
+            "correct_index": q.correct_index,
+            "explanation": q.explanation,
+            "topic": q.topic,
+        })
+    return {"wrong": wrong, "session_subject": sess.subject, "session_topic": sess.topic}
 
 
 # ── Settings ───────────────────────────────────────────────────

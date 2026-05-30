@@ -134,7 +134,13 @@ def start_scheduler(app):
     from apscheduler.triggers.cron import CronTrigger
 
     sched = BackgroundScheduler(timezone="Europe/London")
-    sched.add_job(midnight_job, CronTrigger(hour=0, minute=5), id="midnight")
+    # misfire_grace_time + coalesce: if the process was down at 00:05 and starts
+    # within the hour, still run the missed job once (instead of skipping to
+    # tomorrow). ensure_daily_quest is idempotent, so a late run is harmless.
+    sched.add_job(
+        midnight_job, CronTrigger(hour=0, minute=5), id="midnight",
+        misfire_grace_time=3600, coalesce=True,
+    )
     sched.add_job(_risk_job, CronTrigger(hour="18,20", minute=0), id="risk")
     sched.start()
     app.state.scheduler = sched

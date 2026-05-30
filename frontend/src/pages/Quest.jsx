@@ -5,6 +5,7 @@ import { sounds } from '../sounds.js'
 import QuestionCard from '../components/QuestionCard.jsx'
 import LevelUpModal from '../components/LevelUpModal.jsx'
 import BeltExamModal from '../components/BeltExamModal.jsx'
+import SVGQuestion from '../components/SVGQuestion.jsx'
 
 export default function Quest() {
   const { id } = useParams()
@@ -83,6 +84,8 @@ export default function Quest() {
     setHintUsed({ ...hintUsed, [q.id]: true })
   }
 
+  const [loadingNext, setLoadingNext] = useState(false)
+
   const complete = async () => {
     const r = await childApi.complete(id)
     sounds.questComplete()
@@ -91,8 +94,34 @@ export default function Quest() {
     setDone(r)
   }
 
+  const playAnother = async () => {
+    setLoadingNext(true)
+    try {
+      const r = await childApi.extraQuest()
+      // Reset for the fresh session; effect on [id] refetches after nav.
+      setDone(null); setSession(null)
+      setIdx(0); setSessionXp(0); setCombo(0)
+      setFeedback(null); setHint(null); setHintUsed({})
+      questStart.current = Date.now(); startedAt.current = Date.now()
+      nav(`/quest/${r.session_id}`)
+    } catch (e) {
+      alert(e?.response?.data?.detail || 'Could not start another quest.')
+      nav('/')
+    } finally {
+      setLoadingNext(false)
+    }
+  }
+
   if (done) {
-    return <SessionComplete session={session} done={done} onHome={() => nav('/')} />
+    return (
+      <SessionComplete
+        session={session}
+        done={done}
+        onHome={() => nav('/')}
+        onPlayAnother={playAnother}
+        loadingNext={loadingNext}
+      />
+    )
   }
 
   const fmtTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`
@@ -141,10 +170,11 @@ export default function Quest() {
   )
 }
 
-function SessionComplete({ session, done, onHome }) {
+function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) {
   const isExam = session.session_type === 'belt_exam'
   const pct = done.total ? Math.round((done.score / done.total) * 100) : 0
   const stars = pct >= 100 ? 3 : pct >= 80 ? 2 : pct >= 60 ? 1 : 0
+  const [showReview, setShowReview] = useState(false)
 
   if (isExam) {
     return <BeltExamModal done={done} onHome={onHome} />
@@ -152,11 +182,34 @@ function SessionComplete({ session, done, onHome }) {
   if (done.level_up) {
     return <LevelUpModal levelUp={done.level_up} done={done} onHome={onHome} />
   }
+  if (showReview) {
+    return <ReviewWrong sessionId={session.id} onBack={() => setShowReview(false)} />
+  }
+
+  const hype = pct >= 100 ? '🔥 PERFECT! You smashed it!'
+    : pct >= 80 ? '⭐ Brilliant work!'
+    : pct >= 60 ? '👍 Solid round!'
+    : '💪 Keep going — every wrong answer makes you stronger!'
+
+  const nextPct = done.level_next
+    ? Math.max(4, Math.min(100, 100 - (done.level_next.remaining / done.level_next.at) * 100))
+    : null
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 to-amber-50 flex items-center justify-center p-4">
       <div className="card w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-2">Quest Complete!</h2>
+        <h2 className="text-2xl font-bold mb-1">Quest Complete!</h2>
+        <p className="text-base font-bold text-violet-700 mb-3">{hype}</p>
+
+        {done.personal_best?.is_new_best && (
+          <div className="bg-amber-100 border-2 border-amber-400 rounded-lg p-3 mb-3 animate-badge-pop">
+            <p className="font-bold text-amber-800">🏆 NEW PERSONAL BEST!</p>
+            <p className="text-xs text-amber-700">
+              Previous best: {done.personal_best.previous_best_score}/{done.personal_best.previous_best_total}
+            </p>
+          </div>
+        )}
+
         <p className="text-lg mb-2">Score: {done.score} / {done.total} {'⭐'.repeat(stars)}</p>
         <div className="text-sm text-slate-600 mb-3">
           <div>Base XP: {done.xp_breakdown.base}</div>
@@ -164,6 +217,32 @@ function SessionComplete({ session, done, onHome }) {
           <div>Max combo: {done.xp_breakdown.max_combo}</div>
           <div className="font-bold text-base text-slate-800 mt-1">Total: +{done.xp_total_session} XP</div>
         </div>
+
+        {done.level && (
+          <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mb-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="font-bold text-violet-900">🎖 {done.level}</p>
+              {done.belt_name && (
+                <p className="text-sm text-violet-700">{done.belt_name} Belt</p>
+              )}
+            </div>
+            <p className="text-xs text-violet-700 mb-2">Total: {done.level_total_xp?.toLocaleString()} XP</p>
+            {done.level_next && nextPct != null && (
+              <>
+                <div className="h-2 bg-violet-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-violet-500 to-amber-400"
+                    style={{ width: `${nextPct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-violet-700 mt-1">
+                  {done.level_next.remaining} XP to {done.level_next.name}
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
         {done.new_badges?.length > 0 && (
           <div className="mb-3">
             <p className="font-bold mb-1">🎉 Badges earned:</p>
@@ -187,9 +266,92 @@ function SessionComplete({ session, done, onHome }) {
               : <>Max is ahead — Gap: {done.rival.lead_or_deficit} XP</>}
           </div>
         )}
+        {done.has_wrong_answers && (
+          <button
+            onClick={() => setShowReview(true)}
+            className="btn btn-secondary w-full mb-2"
+          >
+            🔍 Review what I got wrong
+          </button>
+        )}
         <div className="flex gap-2">
-          <button onClick={onHome} className="btn btn-primary flex-1">🏠 Home</button>
+          {onPlayAnother && (
+            <button
+              onClick={onPlayAnother}
+              disabled={loadingNext}
+              className={`btn ${loadingNext ? 'btn-disabled' : 'btn-primary'} flex-1`}
+            >
+              {loadingNext ? 'Loading…' : '⚡ Play another'}
+            </button>
+          )}
+          <button onClick={onHome} className="btn btn-secondary flex-1">🏠 Home</button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ReviewWrong({ sessionId, onBack }) {
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    childApi.review(sessionId).then(setData).catch(() => setData({ error: true }))
+  }, [sessionId])
+
+  if (!data) return <div className="p-6 text-center">Loading…</div>
+  if (data.error) {
+    return (
+      <div className="p-6 text-center">
+        Could not load review.{' '}
+        <button onClick={onBack} className="underline">Back</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4">
+      <div className="max-w-md mx-auto">
+        <header className="flex items-center justify-between mb-4">
+          <button onClick={onBack} className="text-violet-700 font-semibold">← Back</button>
+          <h2 className="font-bold">Review</h2>
+          <span className="text-sm text-slate-500">
+            {data.wrong.length} miss{data.wrong.length === 1 ? '' : 'es'}
+          </span>
+        </header>
+        {data.wrong.length === 0 && (
+          <div className="card text-center">
+            <p className="text-3xl mb-2">🎯</p>
+            <p className="font-bold">No misses — you got them all right!</p>
+          </div>
+        )}
+        {data.wrong.map((q, i) => (
+          <div key={q.question_id} className="card mb-3">
+            <p className="text-xs text-slate-500 mb-1">Q{i + 1} · {q.topic}</p>
+            <p className="font-semibold mb-3">{q.question_text}</p>
+            {q.svg_content && <SVGQuestion svg={q.svg_content} />}
+            <div className="space-y-2 mb-3">
+              {q.options.map((opt, idx) => {
+                const isCorrect = idx === q.correct_index
+                const isPicked = idx === q.picked_index
+                let cls = 'border-slate-200 bg-white'
+                if (isCorrect) cls = 'border-emerald-400 bg-emerald-50'
+                else if (isPicked) cls = 'border-rose-400 bg-rose-50'
+                return (
+                  <div key={idx} className={`border-2 rounded-lg p-2 text-sm flex justify-between ${cls}`}>
+                    <span>{opt}</span>
+                    {isCorrect && <span className="text-emerald-700 font-bold">✓ correct</span>}
+                    {isPicked && !isCorrect && <span className="text-rose-700 font-bold">your pick</span>}
+                  </div>
+                )
+              })}
+            </div>
+            {q.explanation && (
+              <div className="text-xs bg-amber-50 border border-amber-200 rounded p-2 text-amber-900">
+                💡 {q.explanation}
+              </div>
+            )}
+          </div>
+        ))}
+        <button onClick={onBack} className="btn btn-primary w-full">Done reviewing</button>
       </div>
     </div>
   )

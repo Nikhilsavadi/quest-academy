@@ -73,6 +73,13 @@ class CompleteSessionOut(BaseModel):
     streak: int
     daily_done: bool
     rival: dict
+    # Motivation extras
+    level: Optional[str] = None
+    level_total_xp: Optional[int] = None
+    level_next: Optional[dict] = None  # {"name": "Scholar", "at": 500, "remaining": 270}
+    belt_name: Optional[str] = None
+    personal_best: Optional[dict] = None  # {"is_new_best": True, "previous_best_score": 7, "previous_best_total": 10}
+    has_wrong_answers: bool = False
 
 
 # ── Child Home ────────────────────────────────────────────────────

@@ -18,8 +18,22 @@ export default function ChildHome() {
   const [tablesOpen, setTablesOpen] = useState(false)
   const nav = useNavigate()
 
+  const [loadingExtra, setLoadingExtra] = useState(false)
+
   const load = () => childApi.home().then(setHome).catch(() => setHome({ error: true }))
   useEffect(() => { load() }, [])
+
+  const playExtra = async () => {
+    setLoadingExtra(true)
+    try {
+      const r = await childApi.extraQuest()
+      nav(`/quest/${r.session_id}`)
+    } catch (e) {
+      alert(e?.response?.data?.detail || 'Could not start another quest.')
+    } finally {
+      setLoadingExtra(false)
+    }
+  }
 
   if (!home) return <div className="p-6 text-center">Loading your quest...</div>
   if (home.error) return <div className="p-6 text-center">Could not reach Quest Academy. Try again.</div>
@@ -95,6 +109,16 @@ export default function ChildHome() {
         {home.bonus_quests?.map(b => (
           <BonusQuestCard key={b.id} bonus={b} onStart={() => nav(`/quest/${b.id}`)} />
         ))}
+
+        {home.daily_quest?.status === 'completed' && home.cap_remaining > 0 && (
+          <button
+            onClick={playExtra}
+            disabled={loadingExtra}
+            className={`btn ${loadingExtra ? 'btn-disabled' : 'btn-primary'} w-full mb-3`}
+          >
+            {loadingExtra ? 'Loading…' : '⚡ Play another quest'}
+          </button>
+        )}
 
         <div className="card mb-3 cursor-pointer hover:bg-slate-50" onClick={() => setTablesOpen(true)}>
           <div className="flex items-center justify-between">

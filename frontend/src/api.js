@@ -25,6 +25,8 @@ export const childApi = {
   quest: (id) => api.get(`/api/child/quest/${id}`).then(r => r.data),
   answer: (payload) => api.post('/api/child/answer', payload).then(r => r.data),
   complete: (id) => api.post(`/api/child/complete/${id}`).then(r => r.data),
+  extraQuest: () => api.post('/api/child/extra-quest').then(r => r.data),
+  review: (id) => api.get(`/api/child/session/${id}/review`).then(r => r.data),
   hint: (qid) => api.get(`/api/child/hint/${qid}`).then(r => r.data),
   soundToggle: () => api.post('/api/child/sound-toggle').then(r => r.data),
 }
