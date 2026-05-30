@@ -6,7 +6,7 @@ import { setSoundEnabled } from '../sounds.js'
 import XPBar from '../components/XPBar.jsx'
 import StreakCounter from '../components/StreakCounter.jsx'
 import BeltProgress from '../components/BeltProgress.jsx'
-import RivalWidget from '../components/RivalWidget.jsx'
+import LeagueWidget from '../components/LeagueWidget.jsx'
 import DailyQuestCard from '../components/DailyQuestCard.jsx'
 import BonusQuestCard from '../components/BonusQuestCard.jsx'
 import BadgeShelf from '../components/BadgeShelf.jsx'
@@ -102,7 +102,7 @@ export default function ChildHome() {
           </div>
         )}
 
-        <RivalWidget rival={home.rival} />
+        <LeagueWidget rival={home.rival} />
 
         <DailyQuestCard quest={home.daily_quest} onStart={(id) => nav(`/quest/${id}`)} />
 

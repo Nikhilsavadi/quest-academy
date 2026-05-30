@@ -229,8 +229,13 @@ class ProblemSetTemplate(Base):
 
 
 class MaxRival(Base):
+    """A rival in the competitive league. Table name is legacy (was single-row
+    Max); now holds Max + Aisha + Tom keyed by name."""
     __tablename__ = "max_rival"
     id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), unique=True)
+    avatar: Mapped[str] = mapped_column(String(8), default="🤖")
+    personality: Mapped[str] = mapped_column(String(20), default="balanced")
     current_xp: Mapped[int] = mapped_column(Integer, default=0)
     daily_rate: Mapped[int] = mapped_column(Integer, default=45)
     cycle_day: Mapped[int] = mapped_column(Integer, default=1)

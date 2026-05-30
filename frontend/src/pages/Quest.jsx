@@ -259,11 +259,17 @@ function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) 
           🔥 Streak: {done.streak} day{done.streak === 1 ? '' : 's'}
           {done.daily_done && ' — Daily Quest done! Streak safe.'}
         </div>
-        {done.rival && (
+        {done.rival?.leaderboard && (
           <div className="text-sm bg-violet-50 rounded-lg p-2 mb-3">
-            {done.rival.child_ahead
-              ? <>🎉 You're ahead of Max! Lead: +{done.rival.lead_or_deficit} XP</>
-              : <>Max is ahead — Gap: {done.rival.lead_or_deficit} XP</>}
+            <p className="font-bold text-violet-900">
+              ⚔️ League rank: #{done.rival.child_position} of {done.rival.leaderboard.length}
+            </p>
+            {done.rival.action_hint && (
+              <>
+                <p className="text-xs text-violet-800 mt-1">{done.rival.action_hint.headline}</p>
+                <p className="text-xs text-violet-700">{done.rival.action_hint.action}</p>
+              </>
+            )}
           </div>
         )}
         {done.has_wrong_answers && (

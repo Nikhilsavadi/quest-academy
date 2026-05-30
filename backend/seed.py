@@ -88,9 +88,16 @@ def seed() -> None:
             db.add(parent); db.commit(); db.refresh(parent)
             log.info("Seeded parent user")
 
-        # ── 2. Global Max rival (single row across all children) ────────────
-        if not db.query(MaxRival).first():
-            db.add(MaxRival()); db.commit()
+        # ── 2. Rival league (Max + Aisha + Tom) ─────────────────────────────
+        # Migration 0002 also seeds these; keep idempotent here so fresh
+        # local DBs work whether or not alembic ran the seed-INSERT branch.
+        for spec in [
+            {"name": "Max",   "avatar": "🤖", "personality": "balanced"},
+            {"name": "Aisha", "avatar": "📐", "personality": "mathlete"},
+            {"name": "Tom",   "avatar": "🧠", "personality": "strategist"},
+        ]:
+            if not db.query(MaxRival).filter_by(name=spec["name"]).first():
+                db.add(MaxRival(**spec)); db.commit()
 
         # ── 3. Children: created lazily on first /api/auth/enter call ──────
         # See routers/auth.py:child_enter — calls ensure_child_supporting_data
