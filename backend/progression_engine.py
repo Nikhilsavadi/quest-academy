@@ -1,9 +1,16 @@
-"""Topic-level accuracy + difficulty promotion/demotion suggestions."""
+"""Topic-level accuracy + AUTOMATIC difficulty promotion/demotion.
+
+Was suggestion-based (parent had to approve every promotion). Now auto-applies
+when accuracy thresholds are hit, so the child sees harder questions the next
+time they touch a mastered topic without anyone needing to flick a switch.
+The Notification log keeps the parent in the loop.
+"""
 from datetime import date
 from sqlalchemy.orm import Session
 
 from models import (
-    Answer, Question, Session as DBSession, TopicMastery, ProgressionSuggestion
+    Answer, Question, Session as DBSession, TopicMastery,
+    User, Notification,
 )
 
 DIFFICULTY_ORDER = ["starter", "challenge", "olympiad"]
@@ -70,42 +77,52 @@ def run(db: Session, child_id: int, session_id: int) -> None:
         )
         row.last5_correct = sum(1 for a in latest5 if a.is_correct)
 
-        # Promotion: accuracy ≥80% with ≥10 attempts at current difficulty
+        # Auto-promote: ≥80% accuracy with ≥10 attempts at current difficulty
         if (
             row.current_difficulty != "olympiad"
             and row.attempts_at_current >= 10
             and row.correct_at_current / row.attempts_at_current >= 0.8
-            and not row.progression_pending
         ):
             target = _next(row.current_difficulty)
-            if target and not _has_open_suggestion(db, child_id, subject, topic):
-                db.add(ProgressionSuggestion(
-                    child_id=child_id, subject=subject, topic=topic,
-                    from_difficulty=row.current_difficulty, to_difficulty=target,
-                ))
-                row.suggested_difficulty = target
-                row.progression_pending = True
+            if target:
+                _apply_change(db, child_id, row, target, "promoted")
 
-        # Demotion: accuracy <50% over last 5
+        # Auto-demote: <60% over the last 5 answers on this topic (struggling)
         elif (
             row.current_difficulty != "starter"
             and len(latest5) >= 5
             and row.last5_correct < 3
-            and not row.progression_pending
         ):
             target = _prev(row.current_difficulty)
-            if target and not _has_open_suggestion(db, child_id, subject, topic):
-                db.add(ProgressionSuggestion(
-                    child_id=child_id, subject=subject, topic=topic,
-                    from_difficulty=row.current_difficulty, to_difficulty=target,
-                ))
-                row.suggested_difficulty = target
-                row.progression_pending = True
+            if target:
+                _apply_change(db, child_id, row, target, "demoted")
 
     db.commit()
 
 
-def _has_open_suggestion(db: Session, child_id: int, subject: str, topic: str) -> bool:
-    return db.query(ProgressionSuggestion).filter_by(
-        child_id=child_id, subject=subject, topic=topic, status="pending"
-    ).first() is not None
+def _apply_change(db: Session, child_id: int, row: TopicMastery, target: str, kind: str) -> None:
+    """Bump current_difficulty up or down, reset the per-difficulty counters,
+    and emit a parent notification. Resetting the counters is what stops the
+    next quest from immediately re-promoting on the carried-over tally."""
+    prev = row.current_difficulty
+    row.current_difficulty = target
+    row.attempts_at_current = 0
+    row.correct_at_current = 0
+    row.suggested_difficulty = None
+    row.progression_pending = False
+
+    child = db.get(User, child_id)
+    if child and child.parent_id:
+        verb = "promoted" if kind == "promoted" else "stepped down"
+        emoji = "📈" if kind == "promoted" else "📉"
+        db.add(Notification(
+            parent_id=child.parent_id,
+            kind=f"difficulty_{kind}",
+            message=f"{emoji} {child.name} {verb} on {row.topic}: {prev} → {target}",
+            payload={
+                "topic": row.topic, "subject": row.subject,
+                "from": prev, "to": target,
+            },
+        ))
+
+

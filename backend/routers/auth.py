@@ -35,13 +35,27 @@ def child_enter(body: ChildEntryIn, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == synth_email).first()
     created = False
     if user is None:
-        user = User(email=synth_email, name=canonical, role="child", password_hash="")
+        # Attach to the (single) parent so notifications (level-up, exam-ready,
+        # difficulty-promoted, etc.) actually reach the parent dashboard.
+        parent = db.query(User).filter_by(role="parent").first()
+        user = User(
+            email=synth_email, name=canonical, role="child", password_hash="",
+            parent_id=parent.id if parent else None,
+        )
         db.add(user); db.commit(); db.refresh(user)
         created = True
     elif user.name != canonical:
         # allowlist casing changed — sync the display name
         user.name = canonical
         db.commit()
+
+    # Backfill parent_id on any pre-existing child rows that were created
+    # before this fix landed (Samihan + Anvi got parent_id=NULL originally).
+    if user.parent_id is None:
+        parent = db.query(User).filter_by(role="parent").first()
+        if parent:
+            user.parent_id = parent.id
+            db.commit()
 
     # bootstrap supporting rows on first entry (idempotent — safe to repeat)
     if created:
