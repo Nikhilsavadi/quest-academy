@@ -234,6 +234,24 @@ def get_quest(session_id: int, db: DB = Depends(get_db)):
     sess = db.get(DBSession, session_id)
     if not sess or sess.child_id != child.id:
         raise HTTPException(404, "Session not found")
+
+    # If the child is (re-)opening a daily/bonus quest they haven't started
+    # answering yet, reshuffle the questions. Without this they see the same
+    # questions every time they click START on the same day, which is what
+    # parents have flagged as "questions don't change."
+    if sess.status != "completed" and sess.session_type in ("daily", "bonus"):
+        q_ids = [q.id for q in db.query(Question).filter_by(session_id=session_id).all()]
+        if q_ids:
+            answered = db.query(Answer).filter(
+                Answer.question_id.in_(q_ids),
+                Answer.child_id == child.id,
+            ).first()
+            if answered is None:
+                db.query(Question).filter_by(session_id=session_id).delete(synchronize_session=False)
+                db.commit()
+                from routers.parent import _materialise_questions
+                _materialise_questions(db, sess, child.id, learn_mode=False)
+
     if sess.status == "pending":
         sess.status = "active"
         db.commit()
