@@ -189,6 +189,8 @@ def home(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
         weekly_xp=weekly_xp,
         weekly_best_xp=weekly_best,
         cap_remaining=cap_remaining,
+        weak_spots=_compute_weak_spots(db, child.id),
+        recent_quests=_recent_quests(db, child.id, limit=5),
     )
 
 
@@ -513,8 +515,8 @@ def complete(session_id: int, child: User = Depends(get_only_child), db: DB = De
         # XP-milestone cosmetic unlocks (run before commit so they persist together)
         new_unlocks = _apply_xp_unlocks(db, child.id, before, prog.total_xp)
 
-    # Daily limit increment (regular daily + bonus only)
-    if sess.session_type in ("daily", "bonus"):
+    # Daily limit increment (everything except belt exams counts toward the cap)
+    if sess.session_type in ("daily", "bonus", "weak_spot"):
         dl = db.query(DailyLimit).filter_by(child_id=child.id, date=today).first()
         if not dl:
             dl = DailyLimit(child_id=child.id, date=today, questions_completed=0)
@@ -587,6 +589,7 @@ def complete(session_id: int, child: User = Depends(get_only_child), db: DB = De
         personal_best=pb,
         has_wrong_answers=has_wrong,
         new_unlocks=new_unlocks,
+        weak_spots=_compute_weak_spots(db, child.id),
     )
 
 
@@ -640,6 +643,134 @@ def _build_complete_response(db: DB, child_id: int, sess: DBSession) -> Complete
         daily_done=False,
         rival=max_engine.get_state(db, child.id),
     )
+
+
+# ── Weak-spot detection + remedial quest ───────────────────────
+WEAK_MIN_ATTEMPTS = 5      # need enough data to call a topic 'weak'
+WEAK_ACC_THRESHOLD = 0.65  # overall accuracy below this = weak
+WEAK_LAST5_MAX = 2         # OR ≤ 2/5 right recently = weak
+
+
+def _compute_weak_spots(db: DB, child_id: int) -> list[dict]:
+    """Look at TopicMastery rows and surface topics where the child is
+    consistently underperforming. Two qualifying patterns:
+      (a) accuracy < 65% over 5+ attempts (durable struggle)
+      (b) last 5 answers had ≤ 2 right (recent slump)
+    Returns up to 3 weakest, sorted hardest-first."""
+    rows = (
+        db.query(TopicMastery)
+        .filter_by(child_id=child_id)
+        .filter(TopicMastery.attempts >= WEAK_MIN_ATTEMPTS)
+        .all()
+    )
+    weak = []
+    for r in rows:
+        durable = r.accuracy < WEAK_ACC_THRESHOLD
+        recent = r.last5_correct <= WEAK_LAST5_MAX
+        if not (durable or recent):
+            continue
+        reasons = []
+        if durable:
+            reasons.append(f"only {int(r.accuracy * 100)}% over {r.attempts} attempts")
+        if recent:
+            reasons.append(f"just {r.last5_correct}/5 right recently")
+        weak.append({
+            "subject": r.subject,
+            "topic": r.topic,
+            "accuracy": round(r.accuracy, 2),
+            "attempts": r.attempts,
+            "last5_correct": r.last5_correct,
+            "difficulty": r.current_difficulty,
+            "reason": " · ".join(reasons),
+        })
+    weak.sort(key=lambda w: (w["last5_correct"], w["accuracy"]))
+    return weak[:3]
+
+
+def _recent_quests(db: DB, child_id: int, limit: int = 5) -> list[dict]:
+    sessions = (
+        db.query(DBSession)
+        .filter(
+            DBSession.child_id == child_id,
+            DBSession.status == "completed",
+            DBSession.session_type.in_(("daily", "bonus", "weak_spot")),
+        )
+        .order_by(DBSession.completed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    out = []
+    for s in sessions:
+        q_ids = [q.id for q in db.query(Question).filter_by(session_id=s.id).all()]
+        if not q_ids:
+            continue
+        correct = (
+            db.query(Answer)
+            .filter(Answer.question_id.in_(q_ids), Answer.child_id == child_id, Answer.is_correct.is_(True))
+            .count()
+        )
+        wrong = (
+            db.query(Answer)
+            .filter(Answer.question_id.in_(q_ids), Answer.child_id == child_id, Answer.is_correct.is_(False))
+            .count()
+        )
+        out.append({
+            "id": s.id,
+            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+            "subject": s.subject,
+            "topic": s.topic,
+            "difficulty": s.difficulty,
+            "session_type": s.session_type,
+            "score": correct,
+            "total": s.questions_count,
+            "has_wrong_answers": wrong > 0,
+        })
+    return out
+
+
+@router.get("/recent-quests")
+def recent_quests(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
+    return {"quests": _recent_quests(db, child.id, limit=10)}
+
+
+@router.get("/weak-spots")
+def weak_spots(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
+    return {"weak_spots": _compute_weak_spots(db, child.id)}
+
+
+@router.post("/weak-spot-quest")
+def weak_spot_quest(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
+    """Generates a focused remedial session on the weakest topic. Bypasses
+    the 'daily must be complete' gate — these are therapeutic, not bonus."""
+    from routers.parent import _materialise_questions
+
+    weak = _compute_weak_spots(db, child.id)
+    if not weak:
+        raise HTTPException(400, "Nothing flagged as weak — keep playing to build the signal.")
+    target = weak[0]
+
+    today = date.today()
+    dl = db.query(DailyLimit).filter_by(child_id=child.id, date=today).first()
+    used = dl.questions_completed if dl else 0
+    cap = dl.cap if dl else DEFAULT_DAILY_CAP
+    questions_count = 10  # shorter than a daily — gives a small confidence win
+    if used + questions_count > cap:
+        raise HTTPException(429, "You've smashed today's question limit — come back tomorrow!")
+
+    # Drop one difficulty tier to give them a warm-up if they've been struggling
+    softer = {"olympiad": "challenge", "challenge": "starter", "starter": "starter"}.get(target["difficulty"], "starter")
+
+    sess = DBSession(
+        child_id=child.id, subject=target["subject"], difficulty=softer,
+        session_type="weak_spot", status="pending", topic=target["topic"],
+        questions_count=questions_count, source="weak_spot",
+    )
+    db.add(sess); db.commit(); db.refresh(sess)
+    _materialise_questions(db, sess, child.id, learn_mode=False)
+    return {
+        "session_id": sess.id, "topic": target["topic"],
+        "difficulty": softer, "reason": target["reason"],
+    }
 
 
 # ── Child-initiated belt exam start ────────────────────────────

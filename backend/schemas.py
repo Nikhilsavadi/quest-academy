@@ -81,6 +81,7 @@ class CompleteSessionOut(BaseModel):
     personal_best: Optional[dict] = None  # {"is_new_best": True, "previous_best_score": 7, "previous_best_total": 10}
     has_wrong_answers: bool = False
     new_unlocks: list[dict] = []  # cosmetic items freshly unlocked at XP milestones this session
+    weak_spots: list[dict] = []   # topics where accuracy is dragging — surface on completion too
 
 
 # ── Child Home ────────────────────────────────────────────────────
@@ -101,6 +102,8 @@ class ChildHomeOut(BaseModel):
     weekly_xp: int
     weekly_best_xp: int
     cap_remaining: int
+    weak_spots: list[dict] = []      # detected weak topics — drives 'Practice this!' card
+    recent_quests: list[dict] = []   # last ~5 completed sessions for the history strip
 
 
 # ── Parent ────────────────────────────────────────────────────────

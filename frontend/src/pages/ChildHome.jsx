@@ -19,6 +19,7 @@ export default function ChildHome() {
   const nav = useNavigate()
 
   const [loadingExtra, setLoadingExtra] = useState(false)
+  const [loadingWeak, setLoadingWeak] = useState(false)
 
   const load = () => childApi.home().then(setHome).catch(() => setHome({ error: true }))
   useEffect(() => { load() }, [])
@@ -32,6 +33,18 @@ export default function ChildHome() {
       alert(e?.response?.data?.detail || 'Could not start another quest.')
     } finally {
       setLoadingExtra(false)
+    }
+  }
+
+  const playWeakSpot = async () => {
+    setLoadingWeak(true)
+    try {
+      const r = await childApi.weakSpotQuest()
+      nav(`/quest/${r.session_id}`)
+    } catch (e) {
+      alert(e?.response?.data?.detail || 'Could not start the practice quest.')
+    } finally {
+      setLoadingWeak(false)
     }
   }
 
@@ -119,6 +132,56 @@ export default function ChildHome() {
           >
             {loadingExtra ? 'Loading…' : '⚡ Play another quest'}
           </button>
+        )}
+
+        {home.weak_spots?.length > 0 && (
+          <div className="card mb-3 bg-gradient-to-br from-rose-50 to-amber-50 border-2 border-rose-300">
+            <p className="font-bold text-rose-800 mb-1">💡 Weak spot spotted</p>
+            <p className="text-sm text-slate-800 mb-1">
+              <span className="font-semibold">{home.weak_spots[0].topic}</span>
+              {' — '}
+              <span className="text-rose-700 text-xs">{home.weak_spots[0].reason}</span>
+            </p>
+            {home.weak_spots.length > 1 && (
+              <p className="text-xs text-slate-500 mb-2">
+                Also wobbly: {home.weak_spots.slice(1).map(w => w.topic).join(', ')}
+              </p>
+            )}
+            <button
+              onClick={playWeakSpot}
+              disabled={loadingWeak}
+              className={`btn ${loadingWeak ? 'btn-disabled' : 'btn-primary'} w-full`}
+            >
+              {loadingWeak ? 'Loading…' : '🎯 Practice this!'}
+            </button>
+          </div>
+        )}
+
+        {home.recent_quests?.length > 0 && (
+          <div className="card mb-3">
+            <p className="font-bold mb-2">📜 Recent quests</p>
+            <ul className="space-y-1.5">
+              {home.recent_quests.map(q => (
+                <li key={q.id} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className={`px-1.5 rounded text-[10px] font-mono ${q.session_type === 'daily' ? 'bg-amber-100 text-amber-800' : q.session_type === 'weak_spot' ? 'bg-rose-100 text-rose-800' : 'bg-violet-100 text-violet-800'}`}>
+                      {q.session_type === 'weak_spot' ? 'WEAK' : q.session_type.toUpperCase()}
+                    </span>
+                    <span className="truncate">{q.topic}</span>
+                    <span className="text-slate-500 text-xs">{q.score}/{q.total}</span>
+                  </span>
+                  {q.has_wrong_answers && (
+                    <button
+                      onClick={() => nav(`/review/${q.id}`)}
+                      className="text-xs text-rose-700 underline shrink-0"
+                    >
+                      review wrong
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <div className="card mb-3 cursor-pointer hover:bg-slate-50" onClick={() => setTablesOpen(true)}>

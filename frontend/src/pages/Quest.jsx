@@ -315,6 +315,16 @@ function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) 
             🔍 Review what I got wrong
           </button>
         )}
+
+        {done.weak_spots?.length > 0 && (
+          <div className="bg-rose-50 border border-rose-300 rounded-lg p-2 mb-2 text-xs">
+            <p className="font-bold text-rose-800">
+              💡 Pattern: <span>{done.weak_spots[0].topic}</span>
+            </p>
+            <p className="text-rose-700">{done.weak_spots[0].reason}</p>
+            <p className="text-slate-600 mt-0.5">Try a focused practice round from the home screen.</p>
+          </div>
+        )}
         <div className="flex gap-2">
           {onPlayAnother && (
             <button

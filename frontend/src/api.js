@@ -28,6 +28,9 @@ export const childApi = {
   extraQuest: () => api.post('/api/child/extra-quest').then(r => r.data),
   review: (id) => api.get(`/api/child/session/${id}/review`).then(r => r.data),
   startBeltExam: () => api.post('/api/child/belt-exam/start').then(r => r.data),
+  weakSpots: () => api.get('/api/child/weak-spots').then(r => r.data),
+  recentQuests: () => api.get('/api/child/recent-quests').then(r => r.data),
+  weakSpotQuest: () => api.post('/api/child/weak-spot-quest').then(r => r.data),
   hint: (qid) => api.get(`/api/child/hint/${qid}`).then(r => r.data),
   soundToggle: () => api.post('/api/child/sound-toggle').then(r => r.data),
 }
