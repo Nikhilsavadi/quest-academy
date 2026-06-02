@@ -9,7 +9,7 @@ from database import get_db
 from models import (
     Session as DBSession, Question, Answer, Progress, BeltProgress,
     AvatarUnlocks, DailyQuest, DailyLimit, TopicMastery, RestDay, BeltExam,
-    Notification,
+    Notification, User,
 )
 from schemas import (
     ChildHomeOut, SessionOut, QuestionOut, AnswerIn, AnswerResultOut,
@@ -62,8 +62,7 @@ def hint_cost(base: int) -> int:
 
 # ── Home ───────────────────────────────────────────────────────
 @router.get("/home", response_model=ChildHomeOut)
-def home(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def home(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     today = date.today()
 
     prog = db.query(Progress).filter_by(child_id=child.id).first()
@@ -158,14 +157,13 @@ def home(db: DB = Depends(get_db)):
 
 
 @router.post("/extra-quest")
-def extra_quest(db: DB = Depends(get_db)):
+def extra_quest(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     """Child-initiated 'keep playing' quest. Generates a fresh bonus session
     (full XP, feeds the Max rival) on the adaptively-picked weakest topic,
     bounded by the per-day question cap."""
     from daily_scheduler import ensure_daily_quest, subject_for_date, _pick_topic
     from routers.parent import _materialise_questions
 
-    child = get_only_child(db)
     today = date.today()
 
     # The daily quest is the priority — it must be done before extras unlock.
@@ -229,8 +227,7 @@ def _session_score(db: DB, session_id: int) -> int:
 
 # ── Quest fetch ────────────────────────────────────────────────
 @router.get("/quest/{session_id}", response_model=SessionOut)
-def get_quest(session_id: int, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def get_quest(session_id: int, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     sess = db.get(DBSession, session_id)
     if not sess or sess.child_id != child.id:
         raise HTTPException(404, "Session not found")
@@ -271,8 +268,7 @@ def get_quest(session_id: int, db: DB = Depends(get_db)):
 
 # ── Answer ─────────────────────────────────────────────────────
 @router.post("/answer", response_model=AnswerResultOut)
-def submit_answer(body: AnswerIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def submit_answer(body: AnswerIn, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     q = db.get(Question, body.question_id)
     if not q:
         raise HTTPException(404, "Question not found")
@@ -344,8 +340,7 @@ def submit_answer(body: AnswerIn, db: DB = Depends(get_db)):
 
 # ── Complete session ───────────────────────────────────────────
 @router.post("/complete/{session_id}", response_model=CompleteSessionOut)
-def complete(session_id: int, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def complete(session_id: int, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     sess = db.get(DBSession, session_id)
     if not sess or sess.child_id != child.id:
         raise HTTPException(404, "Session not found")
@@ -399,7 +394,6 @@ def complete(session_id: int, db: DB = Depends(get_db)):
         daily.status = "completed"
         daily.completed_at = datetime.utcnow()
         daily_done = True
-        streak_mult = 1.5
         # Streak
         if prog.last_active == today - timedelta(days=1) or prog.last_active == today:
             prog.streak_days = prog.streak_days + (0 if prog.last_active == today else 1)
@@ -407,8 +401,23 @@ def complete(session_id: int, db: DB = Depends(get_db)):
             prog.streak_days = 1
         prog.longest_streak = max(prog.longest_streak, prog.streak_days)
         prog.last_active = today
+        # Streak escalation — longer streaks compound the daily multiplier
+        if prog.streak_days >= 30: streak_mult = 2.5
+        elif prog.streak_days >= 14: streak_mult = 2.0
+        elif prog.streak_days >= 7:  streak_mult = 1.75
+        else: streak_mult = 1.5
 
-    total_session_xp = int(base_xp * streak_mult) + bonus_xp
+    # Performance bonuses — visible "BONUS! +X" surprises on the completion screen
+    perfect_bonus = 0
+    strong_bonus = 0
+    if sess.session_type != "belt_exam" and len(questions) > 0:
+        pct = score / len(questions)
+        if pct >= 1.0:
+            perfect_bonus = 200
+        elif pct >= 0.9:
+            strong_bonus = 100
+
+    total_session_xp = int(base_xp * streak_mult) + bonus_xp + perfect_bonus + strong_bonus
 
     # Belt exam outcomes
     level_up = None
@@ -481,8 +490,20 @@ def complete(session_id: int, db: DB = Depends(get_db)):
         daily.xp_awarded = total_session_xp
         db.commit()
 
-    # Run engines
-    progression_engine.run(db, child.id, session_id)
+    # Run engines — capture promotion events so we can award a graduation bonus
+    promo_events = progression_engine.run(db, child.id, session_id)
+    promotions = [e for e in promo_events if e["kind"] == "promoted"]
+    graduation_bonus = 150 * len(promotions)
+    if graduation_bonus and prog:
+        prog.total_xp += graduation_bonus
+        total_session_xp += graduation_bonus
+        # Re-check level since the extra XP might cross a threshold
+        new_level, _ = level_for_xp(prog.total_xp)
+        if new_level != prog.level:
+            level_up = {"from": prog.level, "to": new_level, "xp": prog.total_xp}
+            prog.level = new_level
+        db.commit()
+
     gate_state = gate_engine.evaluate(db, child.id)
     new_badges = badge_engine.evaluate(
         db, child.id,
@@ -508,6 +529,10 @@ def complete(session_id: int, db: DB = Depends(get_db)):
             "streak_multiplier": streak_mult,
             "session_total": total_session_xp,
             "max_combo": max_combo,
+            "perfect_bonus": perfect_bonus,
+            "strong_bonus": strong_bonus,
+            "graduation_bonus": graduation_bonus,
+            "promotions": promotions,
         },
         xp_total_session=total_session_xp,
         new_badges=new_badges,
@@ -579,10 +604,9 @@ def _build_complete_response(db: DB, child_id: int, sess: DBSession) -> Complete
 
 # ── Review wrong answers ───────────────────────────────────────
 @router.get("/session/{session_id}/review")
-def review_session(session_id: int, db: DB = Depends(get_db)):
+def review_session(session_id: int, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     """Returns every question this child got wrong (or skipped) in the session,
     with the option they picked, the correct option, and the explanation."""
-    child = get_only_child(db)
     sess = db.get(DBSession, session_id)
     if not sess or sess.child_id != child.id:
         raise HTTPException(404, "Session not found")
@@ -609,8 +633,7 @@ def review_session(session_id: int, db: DB = Depends(get_db)):
 
 # ── Settings ───────────────────────────────────────────────────
 @router.post("/sound-toggle")
-def sound_toggle(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def sound_toggle(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     prog = db.query(Progress).filter_by(child_id=child.id).first()
     prog.sound_enabled = not prog.sound_enabled
     db.commit()
@@ -618,9 +641,8 @@ def sound_toggle(db: DB = Depends(get_db)):
 
 
 @router.get("/hint/{question_id}")
-def hint(question_id: int, db: DB = Depends(get_db)):
+def hint(question_id: int, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     """Generate a thinking-direction hint without revealing the answer."""
-    child = get_only_child(db)
     q = db.get(Question, question_id)
     if not q:
         raise HTTPException(404, "Question not found")

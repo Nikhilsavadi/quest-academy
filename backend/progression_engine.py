@@ -26,11 +26,16 @@ def _prev(diff: str) -> str | None:
     return DIFFICULTY_ORDER[i - 1] if i - 1 >= 0 else None
 
 
-def run(db: Session, child_id: int, session_id: int) -> None:
-    """Update topic_mastery and emit suggestions after a session completes."""
+def run(db: Session, child_id: int, session_id: int) -> list[dict]:
+    """Update topic_mastery and auto-promote/demote.
+
+    Returns a list of promotion/demotion events that fired this run, so the
+    complete-session handler can award a 'topic graduation' XP bonus when a
+    promotion lands in the same session that earned it."""
+    events: list[dict] = []
     sess = db.get(DBSession, session_id)
     if not sess or sess.session_type == "belt_exam":
-        return  # belt exam doesn't affect mastery progression
+        return events  # belt exam doesn't affect mastery progression
 
     # Recompute per-topic stats from answers joined to this session's questions
     q_rows = db.query(Question).filter_by(session_id=session_id).all()
@@ -85,7 +90,8 @@ def run(db: Session, child_id: int, session_id: int) -> None:
         ):
             target = _next(row.current_difficulty)
             if target:
-                _apply_change(db, child_id, row, target, "promoted")
+                ev = _apply_change(db, child_id, row, target, "promoted")
+                events.append(ev)
 
         # Auto-demote: <60% over the last 5 answers on this topic (struggling)
         elif (
@@ -95,15 +101,17 @@ def run(db: Session, child_id: int, session_id: int) -> None:
         ):
             target = _prev(row.current_difficulty)
             if target:
-                _apply_change(db, child_id, row, target, "demoted")
+                ev = _apply_change(db, child_id, row, target, "demoted")
+                events.append(ev)
 
     db.commit()
+    return events
 
 
-def _apply_change(db: Session, child_id: int, row: TopicMastery, target: str, kind: str) -> None:
+def _apply_change(db: Session, child_id: int, row: TopicMastery, target: str, kind: str) -> dict:
     """Bump current_difficulty up or down, reset the per-difficulty counters,
-    and emit a parent notification. Resetting the counters is what stops the
-    next quest from immediately re-promoting on the carried-over tally."""
+    and emit a parent notification. Returns an event dict the caller can use
+    to award a graduation bonus."""
     prev = row.current_difficulty
     row.current_difficulty = target
     row.attempts_at_current = 0
@@ -124,5 +132,6 @@ def _apply_change(db: Session, child_id: int, row: TopicMastery, target: str, ki
                 "from": prev, "to": target,
             },
         ))
+    return {"kind": kind, "topic": row.topic, "subject": row.subject, "from": prev, "to": target}
 
 

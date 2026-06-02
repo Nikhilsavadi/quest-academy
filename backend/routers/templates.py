@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from PIL import Image
 from sqlalchemy.orm import Session as DB
 
-from auth import require_parent, get_only_child
+from auth import require_parent
 from database import get_db
 from models import (
     ProblemSetTemplate, Session as DBSession, BeltProgress, DailyQuest,
@@ -22,6 +22,15 @@ SCANS_DIR = Path(__file__).parent.parent / "static" / "scans"
 SCANS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _default_child(db: DB) -> User:
+    """Parent endpoints in this router target 'the' child (multi-child UI for
+    parent assignments not yet built). Pick the first child user."""
+    c = db.query(User).filter_by(role="child").first()
+    if not c:
+        raise HTTPException(404, "No child user — get a child to /enter first")
+    return c
+
+
 def _require_bronze(db: DB, child_id: int):
     bp = db.query(BeltProgress).filter_by(child_id=child_id).first()
     if not bp or bp.current_belt < 1:
@@ -30,7 +39,7 @@ def _require_bronze(db: DB, child_id: int):
 
 @router.post("/scan-template")
 async def scan_template(file: UploadFile = File(...), db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = _default_child(db)
     _require_bronze(db, child.id)
 
     if file.content_type not in ("image/jpeg", "image/png"):
@@ -114,7 +123,7 @@ def delete_template(tid: int, db: DB = Depends(get_db)):
 
 @router.post("/assign-from-template")
 def assign_from_template(body: AssignFromTemplateIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = _default_child(db)
     _require_bronze(db, child.id)
     tpl = db.get(ProblemSetTemplate, body.template_id)
     if not tpl:

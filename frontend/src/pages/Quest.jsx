@@ -214,6 +214,22 @@ function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) 
           <div>Base XP: {done.xp_breakdown.base}</div>
           <div>Streak multiplier: ×{done.xp_breakdown.streak_multiplier}</div>
           <div>Max combo: {done.xp_breakdown.max_combo}</div>
+          {done.xp_breakdown.perfect_bonus > 0 && (
+            <div className="font-bold text-amber-700 animate-badge-pop">🏆 Perfect quest! +{done.xp_breakdown.perfect_bonus} XP</div>
+          )}
+          {done.xp_breakdown.strong_bonus > 0 && (
+            <div className="font-bold text-violet-700 animate-badge-pop">⭐ Strong finish (≥90%)! +{done.xp_breakdown.strong_bonus} XP</div>
+          )}
+          {done.xp_breakdown.graduation_bonus > 0 && (
+            <div className="font-bold text-emerald-700 animate-badge-pop">
+              📈 Topic graduated! +{done.xp_breakdown.graduation_bonus} XP
+              {done.xp_breakdown.promotions?.map((p, i) => (
+                <div key={i} className="text-xs font-normal text-emerald-600">
+                  {p.topic}: {p.from} → {p.to}
+                </div>
+              ))}
+            </div>
+          )}
           <div className="font-bold text-base text-slate-800 mt-1">Total: +{done.xp_total_session} XP</div>
         </div>
 
