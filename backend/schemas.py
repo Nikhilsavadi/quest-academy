@@ -80,6 +80,7 @@ class CompleteSessionOut(BaseModel):
     belt_name: Optional[str] = None
     personal_best: Optional[dict] = None  # {"is_new_best": True, "previous_best_score": 7, "previous_best_total": 10}
     has_wrong_answers: bool = False
+    new_unlocks: list[dict] = []  # cosmetic items freshly unlocked at XP milestones this session
 
 
 # ── Child Home ────────────────────────────────────────────────────

@@ -105,12 +105,15 @@ def check_risk_notifications(db: Session) -> None:
 def midnight_job() -> None:
     db = SessionLocal()
     try:
-        # Streak break for anyone who missed yesterday (no rest day)
         yesterday = date.today() - timedelta(days=1)
-        for child in db.query(User).filter_by(role="child").all():
+        children = db.query(User).filter_by(role="child").all()
+
+        # Per-child: end-of-yesterday summary + streak break check
+        for child in children:
             prog = db.query(Progress).filter_by(child_id=child.id).first()
             if not prog:
                 continue
+            _emit_daily_summary(db, child, yesterday)
             had_rest = db.query(RestDay).filter_by(child_id=child.id, date=yesterday).first()
             dq = db.query(DailyQuest).filter_by(child_id=child.id, date=yesterday).first()
             completed = dq and dq.status == "completed"
@@ -118,14 +121,79 @@ def midnight_job() -> None:
                 prog.streak_days = 0
         db.commit()
 
-        # Tick Max
+        # Tick all rivals (Max + Aisha + Tom) once per day
         max_engine.tick_daily(db)
 
         # Create today's daily quests
-        for child in db.query(User).filter_by(role="child").all():
+        for child in children:
             ensure_daily_quest(db, child.id)
     finally:
         db.close()
+
+
+def _emit_daily_summary(db: Session, child: User, on_date) -> None:
+    """End-of-day rollup notification to the parent — what the child did
+    yesterday in one line. Hands-off accountability."""
+    if not child.parent_id:
+        return
+    from sqlalchemy import func as sqlfunc
+    from models import Session as DBSession, Question, Answer
+    # Sessions completed yesterday
+    sess_count = (
+        db.query(DBSession)
+        .filter(
+            DBSession.child_id == child.id,
+            DBSession.status == "completed",
+            sqlfunc.date(DBSession.completed_at) == on_date,
+        )
+        .count()
+    )
+    if sess_count == 0:
+        # Skip if the child didn't play at all — no point pinging
+        return
+    # XP earned yesterday: sum of correct-answer XP across yesterday's sessions
+    correct = (
+        db.query(sqlfunc.count(Answer.id))
+        .join(Question, Answer.question_id == Question.id)
+        .filter(
+            Answer.child_id == child.id,
+            Answer.is_correct == True,  # noqa: E712
+            sqlfunc.date(Answer.answered_at) == on_date,
+        )
+        .scalar()
+    ) or 0
+    # Promotions notified yesterday (count of difficulty_promoted notifications)
+    promos = (
+        db.query(Notification)
+        .filter(
+            Notification.parent_id == child.parent_id,
+            Notification.kind == "difficulty_promoted",
+            sqlfunc.date(Notification.created_at) == on_date,
+        )
+        .count()
+    )
+    prog = db.query(Progress).filter_by(child_id=child.id).first()
+    streak = prog.streak_days if prog else 0
+    dq = db.query(DailyQuest).filter_by(child_id=child.id, date=on_date).first()
+    did_daily = dq and dq.status == "completed"
+
+    bits = [f"{sess_count} quest{'s' if sess_count != 1 else ''}", f"{correct} correct"]
+    if did_daily:
+        bits.append(f"streak {streak}d 🔥")
+    if promos:
+        bits.append(f"{promos} promotion{'s' if promos != 1 else ''} 📈")
+    msg = f"📊 {child.name} yesterday: " + ", ".join(bits)
+    db.add(Notification(
+        parent_id=child.parent_id,
+        kind="daily_summary",
+        message=msg,
+        payload={
+            "child": child.name, "date": on_date.isoformat(),
+            "sessions": sess_count, "correct": correct,
+            "promotions": promos, "daily_done": bool(did_daily),
+            "streak": streak,
+        },
+    ))
 
 
 def start_scheduler(app):

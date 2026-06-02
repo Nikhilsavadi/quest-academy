@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DB
 from sqlalchemy import func
 
-from auth import require_parent, get_only_child
+from auth import require_parent, default_child
 from database import get_db
 from models import (
     User, Session as DBSession, Question, Answer, Progress, BeltProgress,
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/parent", tags=["parent"], dependencies=[Depends(
 # ── Dashboard summary ──────────────────────────────────────────
 @router.get("/dashboard")
 def dashboard(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     today = date.today()
     prog = db.query(Progress).filter_by(child_id=child.id).first()
     bp = db.query(BeltProgress).filter_by(child_id=child.id).first()
@@ -51,7 +51,7 @@ def dashboard(db: DB = Depends(get_db)):
 # ── Mastery heatmap ────────────────────────────────────────────
 @router.get("/mastery")
 def mastery(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     rows = db.query(TopicMastery).filter_by(child_id=child.id).all()
     by_topic: dict[str, dict] = {}
     for r in rows:
@@ -68,7 +68,7 @@ def mastery(db: DB = Depends(get_db)):
 
 @router.get("/mastery/{topic}/recent")
 def mastery_topic_recent(topic: str, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     answers = (
         db.query(Answer, Question)
         .join(Question, Answer.question_id == Question.id)
@@ -93,7 +93,7 @@ def mastery_topic_recent(topic: str, db: DB = Depends(get_db)):
 # ── Suggestions ────────────────────────────────────────────────
 @router.get("/suggestions")
 def suggestions(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     rows = db.query(ProgressionSuggestion).filter_by(child_id=child.id, status="pending").all()
     return {"suggestions": [
         {"id": r.id, "subject": r.subject, "topic": r.topic,
@@ -104,7 +104,7 @@ def suggestions(db: DB = Depends(get_db)):
 
 @router.post("/suggestion/{sid}/approve")
 def suggestion_approve(sid: int, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     s = db.get(ProgressionSuggestion, sid)
     if not s or s.child_id != child.id:
         raise HTTPException(404, "Not found")
@@ -125,7 +125,7 @@ def suggestion_approve(sid: int, db: DB = Depends(get_db)):
 
 @router.post("/suggestion/{sid}/dismiss")
 def suggestion_dismiss(sid: int, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     s = db.get(ProgressionSuggestion, sid)
     if not s or s.child_id != child.id:
         raise HTTPException(404, "Not found")
@@ -143,7 +143,7 @@ def suggestion_dismiss(sid: int, db: DB = Depends(get_db)):
 # ── Bonus quest assignment ─────────────────────────────────────
 @router.post("/assign-bonus")
 def assign_bonus(body: AssignBonusIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     today = date.today()
     daily = db.query(DailyQuest).filter_by(child_id=child.id, date=today).first()
     if daily and daily.status != "completed":
@@ -211,7 +211,7 @@ def _materialise_questions(db: DB, sess: DBSession, child_id: int, learn_mode: b
             # Route to deterministic generator if topic has one — no AI hallucination
             from deterministic_questions import generate as _deterministic_gen
             topic_for_gen = sess.topic or mastery_context.TOPICS[sess.subject][0]
-            det = _deterministic_gen(topic_for_gen, sess.questions_count)
+            det = _deterministic_gen(topic_for_gen, sess.questions_count, difficulty=sess.difficulty)
             if det is not None:
                 qs = det
             else:
@@ -307,7 +307,7 @@ def _belt_exam_questions(db: DB, child_id: int, sess: DBSession) -> list[dict]:
 # ── Rest days ──────────────────────────────────────────────────
 @router.post("/rest-day")
 def rest_day(body: RestDayIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     parent = db.query(User).filter_by(role="parent").first()
     existing = db.query(RestDay).filter_by(child_id=child.id, date=body.date).first()
     if existing:
@@ -319,7 +319,7 @@ def rest_day(body: RestDayIn, db: DB = Depends(get_db)):
 
 @router.get("/rest-days")
 def list_rest_days(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     rows = db.query(RestDay).filter_by(child_id=child.id).order_by(RestDay.date).all()
     return {"dates": [r.date.isoformat() for r in rows]}
 
@@ -327,7 +327,7 @@ def list_rest_days(db: DB = Depends(get_db)):
 # ── History ────────────────────────────────────────────────────
 @router.get("/history")
 def history(subject: str | None = None, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     q = db.query(DBSession).filter(DBSession.child_id == child.id, DBSession.status == "completed")
     if subject:
         q = q.filter(DBSession.subject == subject)
@@ -349,7 +349,7 @@ def history(subject: str | None = None, db: DB = Depends(get_db)):
 
 @router.get("/weekly-summary")
 def weekly_summary(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     today = date.today()
     start = today - timedelta(days=7)
     sessions = (
@@ -386,14 +386,14 @@ def weekly_summary(db: DB = Depends(get_db)):
 # ── Belt management ────────────────────────────────────────────
 @router.get("/belt-status")
 def belt_status(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     return gate_engine.evaluate(db, child.id)
 
 
 @router.post("/belt-exam/schedule")
 def belt_schedule(db: DB = Depends(get_db)):
     """Toggle: 'enable now'. Child sees exam card on next home load."""
-    child = get_only_child(db)
+    child = default_child(db)
     bp = db.query(BeltProgress).filter_by(child_id=child.id).first()
     if not bp or bp.exam_unlocked_belt is None:
         raise HTTPException(400, "No belt exam currently unlocked")
@@ -412,7 +412,7 @@ def belt_schedule(db: DB = Depends(get_db)):
 
 @router.post("/belt-exam/override-gate")
 def belt_override(belt: int, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     bp = db.query(BeltProgress).filter_by(child_id=child.id).first()
     if not bp:
         raise HTTPException(404, "No belt progress")
@@ -425,7 +425,7 @@ def belt_override(belt: int, db: DB = Depends(get_db)):
 
 @router.get("/belt-exam/history")
 def belt_exam_history(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     rows = db.query(BeltExam).filter_by(child_id=child.id).order_by(BeltExam.attempted_at.desc()).all()
     return {"exams": [
         {"belt": r.belt_level, "score": r.score, "total": r.total, "passed": r.passed,
@@ -462,7 +462,7 @@ def max_update(body: MaxControlsIn, db: DB = Depends(get_db)):
 @router.post("/max-controls/reset")
 def max_reset(db: DB = Depends(get_db)):
     """New Semester: reset child XP + Max XP + belts. Badges kept."""
-    child = get_only_child(db)
+    child = default_child(db)
     prog = db.query(Progress).filter_by(child_id=child.id).first()
     bp = db.query(BeltProgress).filter_by(child_id=child.id).first()
     mr = db.query(MaxRival).first()
@@ -484,7 +484,7 @@ def max_reset(db: DB = Depends(get_db)):
 # ── Notifications ──────────────────────────────────────────────
 @router.get("/notifications")
 def notifications(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    child = default_child(db)
     rows = (
         db.query(Notification)
         .filter_by(parent_id=child.parent_id)

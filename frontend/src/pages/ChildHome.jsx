@@ -48,11 +48,12 @@ export default function ChildHome() {
 
   const beltExamReady = home.belt?.exam_unlocked
   const startBeltExam = async () => {
-    // Belt exam session was created server-side when parent toggled — find it
-    // We trigger by going to /parent for schedule, but child needs to actually start it
-    // Convention: exam session is the latest pending belt_exam session for the child
-    // We expose belt_exam session id via /api/child/home? For simplicity, we go to dashboard hint
-    alert('Ask a parent to start the belt exam from the dashboard.')
+    try {
+      const r = await childApi.startBeltExam()
+      nav(`/quest/${r.session_id}`)
+    } catch (e) {
+      alert(e?.response?.data?.detail || 'Could not start the belt exam.')
+    }
   }
 
   return (
@@ -98,7 +99,7 @@ export default function ChildHome() {
           <div className="card mb-3 bg-yellow-50 border-2 border-yellow-400">
             <p className="font-bold text-lg">⚔️ BELT EXAM READY!</p>
             <p className="text-sm text-slate-600 mb-2">A parent will start it from their dashboard.</p>
-            <button onClick={startBeltExam} className="btn btn-primary w-full">Ready when parent says go</button>
+            <button onClick={startBeltExam} className="btn btn-primary w-full text-lg animate-pulse">⚔️ START EXAM</button>
           </div>
         )}
 

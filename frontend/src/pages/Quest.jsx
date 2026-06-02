@@ -6,6 +6,7 @@ import QuestionCard from '../components/QuestionCard.jsx'
 import LevelUpModal from '../components/LevelUpModal.jsx'
 import BeltExamModal from '../components/BeltExamModal.jsx'
 import SVGQuestion from '../components/SVGQuestion.jsx'
+import Confetti from '../components/Confetti.jsx'
 
 export default function Quest() {
   const { id } = useParams()
@@ -194,8 +195,13 @@ function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) 
     ? Math.max(4, Math.min(100, 100 - (done.level_next.remaining / done.level_next.at) * 100))
     : null
 
+  const celebrate = done.personal_best?.is_new_best
+    || done.new_unlocks?.length > 0
+    || done.xp_breakdown?.perfect_bonus > 0
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 to-amber-50 flex items-center justify-center p-4">
+      {celebrate && <Confetti />}
       <div className="card w-full max-w-md">
         <h2 className="text-2xl font-bold mb-1">Quest Complete!</h2>
         <p className="text-base font-bold text-violet-700 mb-3">{hype}</p>
@@ -206,6 +212,20 @@ function SessionComplete({ session, done, onHome, onPlayAnother, loadingNext }) 
             <p className="text-xs text-amber-700">
               Previous best: {done.personal_best.previous_best_score}/{done.personal_best.previous_best_total}
             </p>
+          </div>
+        )}
+
+        {done.new_unlocks?.length > 0 && (
+          <div className="bg-gradient-to-br from-fuchsia-100 to-violet-100 border-2 border-fuchsia-400 rounded-lg p-3 mb-3 animate-badge-pop">
+            <p className="font-bold text-fuchsia-800">🎁 NEW UNLOCK{done.new_unlocks.length > 1 ? 'S' : ''}!</p>
+            <div className="flex gap-3 mt-2">
+              {done.new_unlocks.map(u => (
+                <div key={u.item} className="text-center">
+                  <div className="text-3xl">{u.emoji}</div>
+                  <div className="text-[10px] text-fuchsia-700">{u.label.replace(/^[^\s]+\s/, '')}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

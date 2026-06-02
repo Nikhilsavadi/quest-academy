@@ -57,6 +57,16 @@ def require_parent(
     return user
 
 
+def default_child(db: Session) -> User:
+    """For PARENT-authed endpoints — picks the first child (no JWT decoding).
+    Parent endpoints don't yet have a per-child selector; multi-child parent
+    flow is a future build."""
+    c = db.query(User).filter_by(role="child").first()
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No child user")
+    return c
+
+
 def get_only_child(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
     db: Session = Depends(get_db),

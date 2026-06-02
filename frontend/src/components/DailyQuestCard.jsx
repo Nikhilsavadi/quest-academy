@@ -26,7 +26,7 @@ export default function DailyQuestCard({ quest, onStart }) {
   return (
     <div className="card mb-3 bg-gradient-to-br from-amber-100 to-yellow-50 border-2 border-amber-300">
       <p className="font-bold text-lg">🟡 Today's Quest — {quest.subject}</p>
-      <p className="text-sm text-slate-600 mb-3">5 questions · keep your streak going!</p>
+      <p className="text-sm text-slate-600 mb-3">{quest.total || 20} questions · keep your streak going!</p>
       <button onClick={() => onStart(quest.id)} className="btn btn-primary w-full text-lg animate-pulse">
         ⚔️ START
       </button>

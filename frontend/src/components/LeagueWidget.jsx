@@ -24,10 +24,13 @@ export default function LeagueWidget({ rival }) {
 
 function LeagueRow({ row }) {
   const isYou = row.is_child
+  const isSibling = row.is_sibling
   const medal = row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : ` #${row.rank}`
   const rowCls = isYou
     ? 'bg-violet-700/40 border border-violet-400'
-    : 'bg-slate-800/60'
+    : isSibling
+      ? 'bg-rose-800/40 border border-rose-500/50'  // real-person rival stands out
+      : 'bg-slate-800/60'
   return (
     <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${rowCls}`}>
       <div className="flex items-center gap-2 min-w-0">
@@ -36,6 +39,7 @@ function LeagueRow({ row }) {
         <span className={`truncate ${isYou ? 'font-bold' : ''}`}>
           {isYou ? 'YOU' : row.name}
         </span>
+        {isSibling && <span className="text-[10px] text-rose-200 uppercase font-bold">sibling</span>}
         {row.surge_active && <span className="text-xs text-amber-300">🔥 surge</span>}
       </div>
       <span className="font-mono text-sm font-bold">{row.xp.toLocaleString()} XP</span>

@@ -12,7 +12,7 @@ import random
 from datetime import date
 from sqlalchemy.orm import Session
 
-from models import MaxRival, Progress
+from models import MaxRival, Progress, User
 
 
 # Max's 28-day cycle (legacy)
@@ -97,6 +97,8 @@ def _personality_why(rival: dict) -> str:
     if rival.get("surge_active"):
         return f"{rival['name']} is training extra hard this week — close the gap before it grows."
     p = rival.get("personality")
+    if p == "sibling":
+        return f"It's {rival['name']} — every quest you do is XP they don't get. Stack a few in a row."
     if p == "mathlete":
         return f"{rival['name']} grinds ~50 XP every day. Consistency beats them — keep your streak alive."
     if p == "strategist":
@@ -133,13 +135,22 @@ def _action_hint(child_xp: int, leaderboard: list[dict]) -> dict:
     }
 
 
-def get_state(db: Session) -> dict:
-    """Returns the full league + Samihan's position + an action hint.
+def get_state(db: Session, child_id: int | None = None) -> dict:
+    """Returns the full league + this child's position + an action hint.
 
-    Also keeps legacy Max-only fields populated so the existing RivalWidget
-    keeps rendering until the frontend swaps to the LeagueWidget."""
+    The league now includes any *sibling* child as a real rival alongside
+    Max/Aisha/Tom — sibling competition is more motivating than fictional
+    avatars. Sibling rows are flagged is_sibling=True so the frontend can
+    visually distinguish them. Legacy Max-only fields kept populated for the
+    old RivalWidget."""
     rivals = db.query(MaxRival).order_by(MaxRival.id).all()
-    prog = db.query(Progress).first()
+    # Resolve the requesting child + Progress
+    if child_id is None:
+        # Legacy call with no child — fall back to first child (parent dashboards)
+        prog = db.query(Progress).order_by(Progress.id).first()
+        child_id = prog.child_id if prog else None
+    else:
+        prog = db.query(Progress).filter_by(child_id=child_id).first()
     child_xp = prog.total_xp if prog else 0
 
     rows = [{
@@ -147,16 +158,35 @@ def get_state(db: Session) -> dict:
         "avatar": "🧑",
         "xp": child_xp,
         "is_child": True,
+        "is_sibling": False,
         "personality": None,
         "daily_rate": None,
         "surge_active": False,
     }]
+
+    # Siblings — other child users
+    if child_id is not None:
+        sibling_users = db.query(User).filter(User.role == "child", User.id != child_id).all()
+        for sib in sibling_users:
+            sp = db.query(Progress).filter_by(child_id=sib.id).first()
+            rows.append({
+                "name": sib.name,
+                "avatar": "🧒",
+                "xp": sp.total_xp if sp else 0,
+                "is_child": False,
+                "is_sibling": True,
+                "personality": "sibling",
+                "daily_rate": None,
+                "surge_active": False,
+            })
+
     for mr in rivals:
         rows.append({
             "name": mr.name,
             "avatar": mr.avatar,
             "xp": mr.current_xp,
             "is_child": False,
+            "is_sibling": False,
             "personality": mr.personality,
             "daily_rate": mr.daily_rate,
             "surge_active": mr.surge_active,

@@ -15,7 +15,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .card { @apply rounded-2xl bg-white shadow p-4; }
 .tap-target { min-height: 44px; min-width: 44px; }
 
-/* Confetti pieces */
+/* Confetti pieces (animation provided by tailwind config: animate-confetti) */
 .confetti-piece {
   position: fixed;
   top: -20px;
@@ -24,10 +24,13 @@ button { -webkit-tap-highlight-color: transparent; }
   pointer-events: none;
 }
 
-/* Theme variants for child home */
+/* Theme variants for child home — extend for new belts 6–8 */
 .theme-gold { background: linear-gradient(180deg, #fef3c7, #fde68a); }
 .theme-silver { background: linear-gradient(180deg, #e2e8f0, #cbd5e1); }
 .theme-royal { background: linear-gradient(180deg, #ede9fe, #ddd6fe); }
 .theme-midnight { background: linear-gradient(180deg, #1e293b, #0f172a); color: white; }
 .theme-elite { background: linear-gradient(180deg, #fbbf24, #f59e0b); }
+.theme-diamond { background: linear-gradient(180deg, #cffafe, #a5f3fc); }
+.theme-mythic { background: linear-gradient(180deg, #fce7f3, #f9a8d4); }
+.theme-legend { background: linear-gradient(180deg, #fde68a, #fb923c); color: white; }
 .theme-default { background: linear-gradient(180deg, #f1f5f9, #e2e8f0); }

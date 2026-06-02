@@ -103,26 +103,33 @@ def _division_question(dividend: int, divisor: int, topic: str, rng: random.Rand
 
 # ── Public generators ────────────────────────────────────────────────────────
 
-def generate_division_2by1(count: int, seed: int | None = None) -> list[dict]:
-    """Generate `count` questions: 2-digit ÷ 1-digit, fully divisible.
-    Divisor in 2-9, quotient in 2-9. Dividend therefore in 10-81."""
+def generate_division_2by1(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
+    """2-digit ÷ 1-digit divisions, fully divisible. Range scales with difficulty:
+      starter:   divisor 2-5,  quotient 2-9  (dividends 4-45)
+      challenge: divisor 2-9,  quotient 2-12 (dividends 10-108)
+      olympiad:  divisor 2-12, quotient 5-15 (dividends 10-180, sometimes 3-digit)"""
     rng = random.Random(seed)
+    dv_lo, dv_hi, q_lo, q_hi = {
+        "starter":   (2, 5,  2, 9),
+        "challenge": (2, 9,  2, 12),
+        "olympiad":  (2, 12, 5, 15),
+    }.get(difficulty, (2, 5, 2, 9))
     out = []
     for _ in range(count):
-        for _attempt in range(20):
-            divisor = rng.randint(2, 9)
-            quotient = rng.randint(2, 9)
+        for _attempt in range(40):
+            divisor = rng.randint(dv_lo, dv_hi)
+            quotient = rng.randint(q_lo, q_hi)
             dividend = divisor * quotient
-            if 10 <= dividend <= 99:
+            if 10 <= dividend <= 999:
                 out.append(_division_question(dividend, divisor, "Division 2÷1", rng))
                 break
     return out
 
 
-def _times_fact_question(rng: random.Random) -> dict:
-    """One multiplication fact (1-12 tables)."""
-    a = rng.randint(2, 12)
-    b = rng.randint(2, 12)
+def _times_fact_question(rng: random.Random, hi: int = 12) -> dict:
+    """One multiplication fact, range scales with difficulty (hi)."""
+    a = rng.randint(2, hi)
+    b = rng.randint(2, hi)
     answer = a * b
     # plausible distractors
     candidates = set()
@@ -149,36 +156,49 @@ def _times_fact_question(rng: random.Random) -> dict:
     return _shuffle_options(answer, distractors, "Times & Division Mix", explain, q_text, rng)
 
 
-def generate_division_3by1(count: int, seed: int | None = None) -> list[dict]:
-    """Generate `count` questions: 3-digit ÷ 1-digit, fully divisible.
-    Divisor in 2-9, quotient in 12-120. Dividend therefore in 100-999."""
+def generate_division_3by1(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
+    """3-digit ÷ 1-digit (or 2-digit at olympiad), fully divisible.
+      starter:   3-digit ÷ 1-digit, divisor 2-9
+      challenge: 3-digit ÷ 1-digit, divisor 2-12, sometimes 4-digit
+      olympiad:  3 or 4-digit ÷ 2-digit divisor"""
     rng = random.Random(seed)
     out = []
     for _ in range(count):
-        for _attempt in range(50):
-            divisor = rng.randint(2, 9)
-            # Aim for quotient that yields a 3-digit dividend
-            min_q = (100 + divisor - 1) // divisor
-            max_q = 999 // divisor
+        for _attempt in range(80):
+            if difficulty == "olympiad":
+                divisor = rng.randint(11, 25)
+                lo, hi = 200, 9999
+            elif difficulty == "challenge":
+                divisor = rng.randint(2, 12)
+                lo, hi = 100, 9999
+            else:  # starter
+                divisor = rng.randint(2, 9)
+                lo, hi = 100, 999
+            min_q = (lo + divisor - 1) // divisor
+            max_q = hi // divisor
+            if max_q < min_q:
+                continue
             quotient = rng.randint(min_q, max_q)
             dividend = divisor * quotient
-            if 100 <= dividend <= 999:
+            if lo <= dividend <= hi:
                 out.append(_division_question(dividend, divisor, "Division 3÷1", rng))
                 break
     return out
 
 
-def generate_times_division_mix(count: int, seed: int | None = None) -> list[dict]:
-    """Mixed drill: each question randomly drawn from × fact / 2÷1 / 3÷1.
-    Forces the child to switch operations without warning — builds fluency
-    in the inverse relationship between multiplication and division.
+def generate_times_division_mix(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
+    """Mixed × / ÷ drill, range scales with difficulty:
+      starter:   tables 2-9
+      challenge: tables 2-12
+      olympiad:  tables 2-15
     """
     rng = random.Random(seed)
+    times_hi = {"starter": 9, "challenge": 12, "olympiad": 15}.get(difficulty, 9)
     out = []
     for _ in range(count):
         kind = rng.choice(["times", "div2", "div3"])
         if kind == "times":
-            out.append(_times_fact_question(rng))
+            out.append(_times_fact_question(rng, hi=times_hi))
         elif kind == "div2":
             # Inline the 2÷1 logic with this rng so seed stays consistent
             for _attempt in range(20):
@@ -203,10 +223,10 @@ def generate_times_division_mix(count: int, seed: int | None = None) -> list[dic
 
 # ── Topic registry — used by _materialise_questions to bypass AI ─────────────
 
-def generate_mental_arithmetic_wrapper(count: int, seed: int | None = None) -> list[dict]:
+def generate_mental_arithmetic_wrapper(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
     """Wrapper delegating to the Schofield-style template library."""
     from mental_arithmetic_templates import generate_mental_arithmetic
-    return generate_mental_arithmetic(count, seed=seed)
+    return generate_mental_arithmetic(count, seed=seed, difficulty=difficulty)
 
 
 DETERMINISTIC_GENERATORS: dict[str, Callable[..., list[dict]]] = {
@@ -217,9 +237,9 @@ DETERMINISTIC_GENERATORS: dict[str, Callable[..., list[dict]]] = {
 }
 
 
-def generate(topic: str, count: int, seed: int | None = None) -> list[dict] | None:
+def generate(topic: str, count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict] | None:
     """Return deterministic questions for `topic`, or None if no generator exists."""
     gen = DETERMINISTIC_GENERATORS.get(topic)
     if gen is None:
         return None
-    return gen(count, seed=seed)
+    return gen(count, seed=seed, difficulty=difficulty)

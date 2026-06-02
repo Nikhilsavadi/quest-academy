@@ -60,6 +60,42 @@ def hint_cost(base: int) -> int:
     return max(1, base // 2)
 
 
+# Cosmetic XP-milestone unlocks. Pure collectibles — every 500 XP a new emoji
+# avatar / theme item drops, so the dopamine flow doesn't depend on hitting
+# rare belt exams.
+XP_UNLOCKS = [
+    {"at":   500, "item": "star_001",    "label": "🌟 Star",      "emoji": "🌟"},
+    {"at":  1000, "item": "rocket_001",  "label": "🚀 Rocket",    "emoji": "🚀"},
+    {"at":  2000, "item": "fire_001",    "label": "🔥 Fire",      "emoji": "🔥"},
+    {"at":  3500, "item": "lightning",   "label": "⚡ Lightning", "emoji": "⚡"},
+    {"at":  5000, "item": "wizard_hat",  "label": "🧙 Wizard Hat","emoji": "🧙"},
+    {"at":  7000, "item": "crown",       "label": "👑 Crown",     "emoji": "👑"},
+    {"at": 10000, "item": "robot",       "label": "🤖 Robot",     "emoji": "🤖"},
+    {"at": 15000, "item": "unicorn",     "label": "🦄 Unicorn",   "emoji": "🦄"},
+    {"at": 20000, "item": "shield",      "label": "🛡️ Shield",    "emoji": "🛡️"},
+    {"at": 25000, "item": "rainbow",     "label": "🌈 Rainbow",   "emoji": "🌈"},
+    {"at": 35000, "item": "dragon",      "label": "🐉 Dragon",    "emoji": "🐉"},
+]
+
+
+def _apply_xp_unlocks(db, child_id: int, xp_before: int, xp_after: int) -> list[dict]:
+    """If this session's XP gain crossed any unlock thresholds, add them to the
+    child's AvatarUnlocks and return the freshly-unlocked items so the
+    completion screen can pop them as a reward."""
+    crossed = [u for u in XP_UNLOCKS if xp_before < u["at"] <= xp_after]
+    if not crossed:
+        return []
+    avu = db.query(AvatarUnlocks).filter_by(child_id=child_id).first()
+    if not avu:
+        return []
+    existing = set(avu.unlocked_items or [])
+    fresh = [u for u in crossed if u["item"] not in existing]
+    if fresh:
+        avu.unlocked_items = list(existing | {u["item"] for u in fresh})
+        db.commit()
+    return fresh
+
+
 # ── Home ───────────────────────────────────────────────────────
 @router.get("/home", response_model=ChildHomeOut)
 def home(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
@@ -116,7 +152,7 @@ def home(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     cap_remaining = (dl.cap - dl.questions_completed) if dl else DEFAULT_DAILY_CAP
 
     # Rival
-    rival = max_engine.get_state(db)
+    rival = max_engine.get_state(db, child.id)
 
     # Weekly XP
     week_start = today - timedelta(days=today.weekday())
@@ -460,6 +496,7 @@ def complete(session_id: int, child: User = Depends(get_only_child), db: DB = De
             bp.exam_attempts = attempts
 
     # Apply XP
+    new_unlocks: list[dict] = []
     if prog and total_session_xp:
         before = prog.total_xp
         prog.total_xp = before + total_session_xp
@@ -470,9 +507,11 @@ def complete(session_id: int, child: User = Depends(get_only_child), db: DB = De
             db.add(Notification(
                 parent_id=child.parent_id,
                 kind="level_up",
-                message=f"🎉 Samihan reached {new_level}!",
+                message=f"🎉 {child.name} reached {new_level}!",
                 payload={"level": new_level},
             ))
+        # XP-milestone cosmetic unlocks (run before commit so they persist together)
+        new_unlocks = _apply_xp_unlocks(db, child.id, before, prog.total_xp)
 
     # Daily limit increment (regular daily + bonus only)
     if sess.session_type in ("daily", "bonus"):
@@ -540,13 +579,14 @@ def complete(session_id: int, child: User = Depends(get_only_child), db: DB = De
         belt_progress=gate_state,
         streak=prog.streak_days if prog else 0,
         daily_done=daily_done,
-        rival=max_engine.get_state(db),
+        rival=max_engine.get_state(db, child.id),
         level=cur_level_name,
         level_total_xp=prog.total_xp if prog else None,
         level_next=next_info,
         belt_name=belt_name,
         personal_best=pb,
         has_wrong_answers=has_wrong,
+        new_unlocks=new_unlocks,
     )
 
 
@@ -598,8 +638,40 @@ def _build_complete_response(db: DB, child_id: int, sess: DBSession) -> Complete
         belt_progress=gate_engine.evaluate(db, child_id),
         streak=prog.streak_days if prog else 0,
         daily_done=False,
-        rival=max_engine.get_state(db),
+        rival=max_engine.get_state(db, child.id),
     )
+
+
+# ── Child-initiated belt exam start ────────────────────────────
+@router.post("/belt-exam/start")
+def start_belt_exam(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
+    """Child kicks off their belt exam — no parent gate. The exam has only
+    unlocked if they already met every checklist item, so there's no friction
+    benefit to making the parent click an approval button."""
+    bp = db.query(BeltProgress).filter_by(child_id=child.id).first()
+    if not bp or bp.exam_unlocked_belt is None:
+        raise HTTPException(400, "No belt exam currently unlocked")
+    # If a pending belt_exam session for this child already exists, return it
+    existing = (
+        db.query(DBSession)
+        .filter_by(child_id=child.id, session_type="belt_exam", status="pending")
+        .order_by(DBSession.id.desc())
+        .first()
+    )
+    if existing:
+        return {"session_id": existing.id, "belt": bp.exam_unlocked_belt}
+
+    sess = DBSession(
+        child_id=child.id, subject="mixed",
+        difficulty="exam", session_type="belt_exam", status="pending",
+        questions_count=0, source="ai_generated",
+        time_limit_seconds={1: 1200, 2: 1500, 3: 1800, 4: 2100, 5: 2400}.get(bp.exam_unlocked_belt, 1200),
+        assigned_by=child.parent_id,
+    )
+    db.add(sess); db.commit(); db.refresh(sess)
+    from routers.parent import _materialise_questions
+    _materialise_questions(db, sess, child.id, learn_mode=False)
+    return {"session_id": sess.id, "belt": bp.exam_unlocked_belt}
 
 
 # ── Review wrong answers ───────────────────────────────────────

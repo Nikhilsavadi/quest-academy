@@ -1219,15 +1219,45 @@ TEMPLATES: list[Callable] = [
 ]
 
 
-def generate_mental_arithmetic(count: int, seed: int | None = None) -> list[dict]:
-    """Pick `count` templates uniformly at random and execute each."""
+# Templates carrying genuine multi-step / abstract reasoning — gated to higher levels
+_OLYMPIAD_ONLY = {
+    t_fraction_tank_remaining, t_rearrange_digits_max, t_balance_equation,
+    t_half_of_expression, t_fraction_of_1, t_cm_to_m_with_complement,
+    t_difference_lengths_set, t_triangle_third_side, t_two_thirds_from_one_third,
+    t_subtract_a_product, t_doubled_then_added, t_back_calc_pieces,
+}
+# Simple one-operation drills — at challenge/olympiad we drop these so the
+# bar stays meaningfully higher
+_STARTER_ONLY = {
+    t_addition_3digit_plus_1digit, t_subtraction_2digit,
+    t_repeated_multiplication_10s, t_place_value_decompose_tens_ones,
+    t_place_value_write_digits, t_value_of_digit, t_hundreds_tens_ones,
+    t_days_in_month, t_share_equally, t_multi_coin_total,
+    t_coin_count_to_total, t_n_less_than, t_n_more_than,
+    t_sequence_extend_asc, t_sequence_extend_desc,
+}
+
+
+def _templates_for(difficulty: str) -> list:
+    if difficulty == "olympiad":
+        return [t for t in TEMPLATES if t not in _STARTER_ONLY]
+    if difficulty == "challenge":
+        return [t for t in TEMPLATES if t not in _STARTER_ONLY and t not in _OLYMPIAD_ONLY]
+    # starter — strip the multi-step abstract ones so kids aren't ambushed
+    return [t for t in TEMPLATES if t not in _OLYMPIAD_ONLY]
+
+
+def generate_mental_arithmetic(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
+    """Pick `count` templates and execute each. Template pool scales by
+    difficulty so promotion actually feels like harder questions, not just
+    a bigger XP number."""
     rng = random.Random(seed)
+    pool = _templates_for(difficulty)
     out = []
-    seen_templates: list = []  # avoid 3 of the same template back-to-back
+    seen_templates: list = []  # avoid back-to-back repeats
     for _ in range(count):
-        # avoid immediate repeats
-        choices = [t for t in TEMPLATES if t not in seen_templates[-2:]]
-        template = rng.choice(choices or TEMPLATES)
+        choices = [t for t in pool if t not in seen_templates[-2:]]
+        template = rng.choice(choices or pool)
         out.append(template(rng))
         seen_templates.append(template)
     return out
