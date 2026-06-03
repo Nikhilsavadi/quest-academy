@@ -230,6 +230,7 @@ def extra_quest(child: User = Depends(get_only_child), db: DB = Depends(get_db))
     db.add(sess); db.commit(); db.refresh(sess)
 
     _materialise_questions(db, sess, child.id, learn_mode=False)
+    db.commit()  # persist the Question rows from _materialise_questions
     return {"session_id": sess.id, "subject": subject, "topic": topic}
 
 
@@ -271,21 +272,24 @@ def get_quest(session_id: int, child: User = Depends(get_only_child), db: DB = D
         raise HTTPException(404, "Session not found")
 
     # If the child is (re-)opening a daily/bonus quest they haven't started
-    # answering yet, reshuffle the questions. Without this they see the same
-    # questions every time they click START on the same day, which is what
-    # parents have flagged as "questions don't change."
+    # answering yet, reshuffle the questions. Also self-heals: if the session
+    # somehow has zero questions (silent generator failure, partial commit),
+    # we always re-materialise so the quest renders instead of going blank.
     if sess.status != "completed" and sess.session_type in ("daily", "bonus"):
-        q_ids = [q.id for q in db.query(Question).filter_by(session_id=session_id).all()]
-        if q_ids:
-            answered = db.query(Answer).filter(
-                Answer.question_id.in_(q_ids),
-                Answer.child_id == child.id,
-            ).first()
-            if answered is None:
-                db.query(Question).filter_by(session_id=session_id).delete(synchronize_session=False)
-                db.commit()
-                from routers.parent import _materialise_questions
-                _materialise_questions(db, sess, child.id, learn_mode=False)
+        answered = (
+            db.query(Answer)
+            .join(Question, Answer.question_id == Question.id)
+            .filter(Question.session_id == session_id, Answer.child_id == child.id)
+            .first()
+        )
+        if answered is None:
+            db.query(Question).filter_by(session_id=session_id).delete(synchronize_session=False)
+            from routers.parent import _materialise_questions
+            _materialise_questions(db, sess, child.id, learn_mode=False)
+            # MUST commit here — if sess.status is already 'active' the
+            # status-transition commit below won't fire and the new questions
+            # would get rolled back when the request ends.
+            db.commit()
 
     if sess.status == "pending":
         sess.status = "active"
@@ -767,6 +771,7 @@ def weak_spot_quest(child: User = Depends(get_only_child), db: DB = Depends(get_
     )
     db.add(sess); db.commit(); db.refresh(sess)
     _materialise_questions(db, sess, child.id, learn_mode=False)
+    db.commit()  # persist the Question rows
     return {
         "session_id": sess.id, "topic": target["topic"],
         "difficulty": softer, "reason": target["reason"],
@@ -802,6 +807,7 @@ def start_belt_exam(child: User = Depends(get_only_child), db: DB = Depends(get_
     db.add(sess); db.commit(); db.refresh(sess)
     from routers.parent import _materialise_questions
     _materialise_questions(db, sess, child.id, learn_mode=False)
+    db.commit()  # persist the Question rows
     return {"session_id": sess.id, "belt": bp.exam_unlocked_belt}
 
 
