@@ -32,7 +32,24 @@ def ensure_daily_quest(db: Session, child_id: int, on_date: date | None = None) 
         return None
     existing = db.query(DailyQuest).filter_by(child_id=child_id, date=on_date).first()
     if existing:
-        return existing
+        # Health check — Samihan's Railway session 11 wedged with 0 questions
+        # and the get_quest self-heal couldn't recover (presumed AI fallback
+        # hanging on a phantom topic). If the linked session has zero Question
+        # rows AND no answers yet, nuke and rebuild so the child isn't stuck.
+        from models import Question, Answer
+        existing_sess = db.get(DBSession, existing.session_id)
+        if existing_sess and existing.status != "completed":
+            q_count = db.query(Question).filter_by(session_id=existing.session_id).count()
+            if q_count == 0:
+                # No answers can exist (no questions to answer), so this is safe
+                db.delete(existing)
+                if existing_sess:
+                    db.delete(existing_sess)
+                db.commit()
+                # Fall through to recreate below
+                existing = None
+        if existing:
+            return existing
 
     subject = subject_for_date(on_date)
     # Pick a topic — weakest with attempts, else first unseen, else first topic
