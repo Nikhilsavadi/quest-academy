@@ -229,11 +229,28 @@ def generate_mental_arithmetic_wrapper(count: int, seed: int | None = None, diff
     return generate_mental_arithmetic(count, seed=seed, difficulty=difficulty)
 
 
+def _nvr_topic_wrapper(topic_name: str) -> Callable[..., list[dict]]:
+    """Build a generator closure for a specific NVR topic."""
+    def gen(count: int, seed: int | None = None, difficulty: str = "starter") -> list[dict]:
+        from nvr_templates import generate_nvr
+        return generate_nvr(topic_name, count, seed=seed, difficulty=difficulty)
+    return gen
+
+
 DETERMINISTIC_GENERATORS: dict[str, Callable[..., list[dict]]] = {
-    "Mental Arithmetic":   generate_mental_arithmetic_wrapper,  # 60+ Schofield-style templates
+    # Maths — Schofield + drills (60+ templates, scale with difficulty)
+    "Mental Arithmetic":   generate_mental_arithmetic_wrapper,
     "Times & Division Mix": generate_times_division_mix,
     "Division 2÷1":         generate_division_2by1,
     "Division 3÷1":         generate_division_3by1,
+    # NVR — deterministic SVG generators (no AI hallucination of visuals).
+    # Re-enables NVR for 11+ prep; replaces the v1 AI path that produced
+    # visual-vs-logic mismatches.
+    "NVR Sequences":   _nvr_topic_wrapper("NVR Sequences"),
+    "NVR Matrices":    _nvr_topic_wrapper("NVR Matrices"),
+    "NVR Odd One Out": _nvr_topic_wrapper("NVR Odd One Out"),
+    "NVR Rotations":   _nvr_topic_wrapper("NVR Rotations"),
+    "NVR Analogies":   _nvr_topic_wrapper("NVR Analogies"),
 }
 
 

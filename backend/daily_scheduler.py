@@ -17,8 +17,18 @@ log = logging.getLogger("scheduler")
 # Maths-only for v1 launch (NVR + VR question generation has visual-vs-logic
 # mismatch bugs — see screenshots from 2026-05-15 testing). Re-add NVR / VR
 # when deterministic generators land for those subjects.
-SUBJECT_ROTATION = ["Maths"] * 7
-# Mon=0, Sun=6 → spec: Sun=free choice; we default to Maths for free choice
+SUBJECT_ROTATION = [
+    "Maths",  # Mon
+    "Maths",  # Tue
+    "NVR",    # Wed
+    "Maths",  # Thu
+    "NVR",    # Fri
+    "Maths",  # Sat
+    "Maths",  # Sun
+]
+# Mon=0, Sun=6. NVR is now re-enabled via deterministic SVG generators
+# (backend/nvr_templates.py). Two NVR days per week balances 11+ exam
+# coverage against the kids' comfort with Maths-only.
 
 
 def subject_for_date(d: date) -> str:
