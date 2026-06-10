@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DB
 
-from auth import require_parent, get_only_child
+from auth import require_parent, get_only_child, default_child
 from database import get_db
 from models import (
     TablesSession, TablesFactStats, TablesTargets, Progress, User
@@ -16,8 +16,7 @@ router = APIRouter(prefix="/api/tables", tags=["tables"])
 
 
 @router.post("/session/log")
-def log_session(body: TablesSessionIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def log_session(body: TablesSessionIn, child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     pb_broken = False
 
     if body.mode == "blitz":
@@ -71,8 +70,7 @@ def log_session(body: TablesSessionIn, db: DB = Depends(get_db)):
 
 
 @router.get("/heatmap")
-def heatmap(db: DB = Depends(get_db)):
-    child = get_only_child(db)
+def heatmap(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     rows = db.query(TablesFactStats).filter_by(child_id=child.id).all()
     cells = []
     for r in rows:
@@ -96,7 +94,10 @@ def heatmap(db: DB = Depends(get_db)):
 
 @router.post("/target", dependencies=[Depends(require_parent)])
 def set_target(body: TablesTargetIn, db: DB = Depends(get_db)):
-    child = get_only_child(db)
+    # Parent-authed endpoint — the JWT here is the parent's, so we use
+    # default_child (legacy single-child behaviour) instead of decoding a
+    # child JWT.
+    child = default_child(db)
     parent = db.query(User).filter_by(role="parent").first()
     tgt = db.query(TablesTargets).filter_by(child_id=child.id).first()
     if not tgt:
@@ -111,9 +112,8 @@ def set_target(body: TablesTargetIn, db: DB = Depends(get_db)):
 
 
 @router.get("/weak-facts")
-def weak_facts(db: DB = Depends(get_db)):
+def weak_facts(child: User = Depends(get_only_child), db: DB = Depends(get_db)):
     """Facts where avg_response_ms > 2× the child's overall avg (used by Fix It mode)."""
-    child = get_only_child(db)
     rows = db.query(TablesFactStats).filter_by(child_id=child.id).all()
     rows = [r for r in rows if r.attempts > 0]
     if not rows:
