@@ -82,28 +82,58 @@ def shape(name: str, color: str = "black", fill: bool = True,
 
 
 def cell_svg(content: str, bg: str = "#fff", border: bool = True) -> str:
-    """Wrap fragment(s) in an 80×80 cell <svg>."""
-    border_attr = ' style="border:1px solid #94a3b8; background:%s; border-radius:4px;"' % bg if border else ' style="background:%s"' % bg
+    """Standalone 80×80 cell SVG — used for option buttons. Each option button
+    sanitises its SVG independently via SVGOption (svg-only profile)."""
+    border_attr = (
+        f' style="border:1px solid #94a3b8; background:{bg}; border-radius:4px;"'
+        if border else f' style="background:{bg}"'
+    )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {CELL} {CELL}" '
         f'width="80" height="80"{border_attr}>{content}</svg>'
     )
 
 
+def _frag_from_cell(cell: str) -> str:
+    """Strip the outer <svg> wrapper from a cell_svg() string so we can
+    embed its drawing inside a composite SVG via <g transform>."""
+    if cell.startswith("<svg"):
+        inner_start = cell.index(">") + 1
+        inner_end = cell.rindex("</svg>")
+        return cell[inner_start:inner_end]
+    return cell
+
+
+def _cell_bg_frag(qmark: bool = False) -> str:
+    """Background rect that goes behind a cell's drawing. The question-mark
+    cell uses a violet-tinted background to flag 'find this'."""
+    bg = "#faf5ff" if qmark else "#fff"
+    stroke = "#a855f7" if qmark else "#94a3b8"
+    return (
+        f'<rect x="0" y="0" width="{CELL}" height="{CELL}" fill="{bg}" '
+        f'stroke="{stroke}" stroke-width="1" rx="4"/>'
+    )
+
+
 def row_svg(cells: list[str], spacing: int = 12) -> str:
-    """Lay cells side by side with the given pixel spacing."""
+    """Lay cells side by side as a SINGLE SVG using <g transform="translate()">
+    — DOMPurify-safe (no nested <svg>) and renders cleanly in every browser."""
     n = len(cells)
     width = n * CELL + (n - 1) * spacing
     parts = []
-    for i, frag in enumerate(cells):
+    for i, cell in enumerate(cells):
         x = i * (CELL + spacing)
+        is_q = cell == question_mark_cell()
         parts.append(
-            f'<svg x="{x}" y="0" width="{CELL}" height="{CELL}" viewBox="0 0 {CELL} {CELL}" '
-            f'style="overflow:visible">{_cell_inner(frag)}</svg>'
+            f'<g transform="translate({x},0)">'
+            f'{_cell_bg_frag(is_q)}'
+            f'{_frag_from_cell(cell)}'
+            f'</g>'
         )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {CELL}" '
-        f'width="100%" style="max-width:380px;display:block;margin:0 auto;">'
+        f'width="100%" preserveAspectRatio="xMidYMid meet" '
+        f'style="max-width:380px;display:block;margin:0 auto;">'
         + "".join(parts)
         + "</svg>"
     )
@@ -114,38 +144,27 @@ def grid_svg(cells: list[str], cols: int = 3, spacing: int = 8) -> str:
     width = cols * CELL + (cols - 1) * spacing
     height = rows * CELL + (rows - 1) * spacing
     parts = []
-    for i, frag in enumerate(cells):
+    for i, cell in enumerate(cells):
         r, c = divmod(i, cols)
         x, y = c * (CELL + spacing), r * (CELL + spacing)
+        is_q = cell == question_mark_cell()
         parts.append(
-            f'<svg x="{x}" y="{y}" width="{CELL}" height="{CELL}" viewBox="0 0 {CELL} {CELL}" '
-            f'style="overflow:visible">{_cell_inner(frag)}</svg>'
+            f'<g transform="translate({x},{y})">'
+            f'{_cell_bg_frag(is_q)}'
+            f'{_frag_from_cell(cell)}'
+            f'</g>'
         )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
-        f'width="100%" style="max-width:300px;display:block;margin:0 auto;">'
+        f'width="100%" preserveAspectRatio="xMidYMid meet" '
+        f'style="max-width:300px;display:block;margin:0 auto;">'
         + "".join(parts)
         + "</svg>"
     )
 
 
-def _cell_inner(cell_or_frag: str) -> str:
-    """If passed a wrapped cell_svg(), return its inner content; else
-    pass-through. Lets us reuse the same cell-builder for both options and
-    composite question SVGs."""
-    if cell_or_frag.startswith("<svg"):
-        # strip <svg ...>...</svg> wrapper, also add a background rect for visibility
-        inner_start = cell_or_frag.index(">") + 1
-        inner_end = cell_or_frag.rindex("</svg>")
-        return (
-            f'<rect x="0" y="0" width="{CELL}" height="{CELL}" fill="#fff" '
-            f'stroke="#94a3b8" stroke-width="1" rx="4"/>'
-            + cell_or_frag[inner_start:inner_end]
-        )
-    return cell_or_frag
-
-
 def question_mark_cell() -> str:
+    """A cell showing a big violet '?' — marks the slot the child must fill."""
     return cell_svg(
         '<text x="40" y="55" text-anchor="middle" font-size="48" font-weight="bold" '
         'fill="#a855f7" font-family="sans-serif">?</text>',
@@ -402,17 +421,21 @@ def t_rotation_match(rng: random.Random) -> dict:
 
 
 def _analogy_svg(a: str, b: str, c: str) -> str:
-    """Pure-SVG layout for 'A → B  |  C → ?' (so DOMPurify keeps it intact)."""
-    # Positions
+    """Pure-SVG layout for 'A → B  |  C → ?', using <g transform> for cell
+    placement so DOMPurify can't strip the layout structure."""
     aw = CELL
     arrow_w = 30
     sep_w = 20
-    width = aw * 3 + arrow_w * 2 + sep_w + 30  # final '?' glyph block
-    def at(x: int, frag: str) -> str:
+    width = aw * 3 + arrow_w * 2 + sep_w + 30
+
+    def at(x: int, cell: str) -> str:
         return (
-            f'<svg x="{x}" y="0" width="{CELL}" height="{CELL}" viewBox="0 0 {CELL} {CELL}" '
-            f'style="overflow:visible">{_cell_inner(frag)}</svg>'
+            f'<g transform="translate({x},0)">'
+            f'{_cell_bg_frag()}'
+            f'{_frag_from_cell(cell)}'
+            f'</g>'
         )
+
     x_a = 0
     x_arrow1 = x_a + aw
     x_b = x_arrow1 + arrow_w
@@ -422,7 +445,8 @@ def _analogy_svg(a: str, b: str, c: str) -> str:
     x_q = x_arrow2 + arrow_w
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {CELL}" '
-        f'width="100%" style="max-width:420px;display:block;margin:0 auto;">'
+        f'width="100%" preserveAspectRatio="xMidYMid meet" '
+        f'style="max-width:420px;display:block;margin:0 auto;">'
         + at(x_a, a)
         + f'<text x="{x_arrow1 + arrow_w//2}" y="48" text-anchor="middle" font-size="28" font-weight="bold">→</text>'
         + at(x_b, b)
