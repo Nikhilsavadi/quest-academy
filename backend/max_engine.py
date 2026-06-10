@@ -9,10 +9,10 @@ Public surface used elsewhere:
 - pick_speech(db, ...): rival speech-bubble picker (unchanged for Max)
 """
 import random
-from datetime import date
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
-from models import MaxRival, Progress, User
+from models import MaxRival, Progress, User, Session as DBSession, Question, Answer
 
 
 # Max's 28-day cycle (legacy)
@@ -135,14 +135,67 @@ def _action_hint(child_xp: int, leaderboard: list[dict]) -> dict:
     }
 
 
+def _week_start_iso() -> str:
+    """Monday of this week in UTC."""
+    today = date.today()
+    return (today - timedelta(days=today.weekday())).isoformat()
+
+
+def _weekly_xp_for_child(db: Session, child_id: int) -> int:
+    """Sum of XP earned in answers since Monday 00:00. Mirrors the XP rules
+    in /api/child/answer: 10/15/25 per correct (by session difficulty),
+    5 per wrong."""
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    cutoff = datetime.combine(week_start, datetime.min.time())
+    answers = (
+        db.query(Answer, Question, DBSession)
+        .join(Question, Answer.question_id == Question.id)
+        .join(DBSession, Question.session_id == DBSession.id)
+        .filter(Answer.child_id == child_id, Answer.answered_at >= cutoff)
+        .filter(DBSession.session_type != "belt_exam")  # belt exams pay via bonus, not per-correct
+        .all()
+    )
+    total = 0
+    for a, _q, s in answers:
+        if a.is_correct:
+            per = {"starter": 10, "challenge": 15, "olympiad": 25}.get(s.difficulty, 10)
+            total += per // 2 if a.used_hint else per
+        else:
+            total += 5
+    return total
+
+
+def _weekly_xp_for_rival(mr: MaxRival) -> int:
+    """How much XP this rival has gained since Monday. Derived from
+    xp_history (cumulative 'max' values keyed by date)."""
+    week_start = _week_start_iso()
+    hist = mr.xp_history or []
+    if not hist:
+        return 0
+    # Find the cumulative XP as-of last Monday (or oldest entry if shorter).
+    baseline = None
+    for entry in hist:
+        if entry.get("date", "") < week_start:
+            baseline = entry.get("max", 0)
+        else:
+            break
+    if baseline is None:
+        # No history before Monday — use first entry's value as floor (rival
+        # had at least that much before this week started).
+        baseline = hist[0].get("max", 0)
+    return max(0, mr.current_xp - baseline)
+
+
 def get_state(db: Session, child_id: int | None = None) -> dict:
     """Returns the full league + this child's position + an action hint.
 
-    The league now includes any *sibling* child as a real rival alongside
-    Max/Aisha/Tom — sibling competition is more motivating than fictional
-    avatars. Sibling rows are flagged is_sibling=True so the frontend can
-    visually distinguish them. Legacy Max-only fields kept populated for the
-    old RivalWidget."""
+    Leaderboard XP is **this week's gain**, not cumulative — so a strong
+    weekly run can flip the rankings. Each Monday everyone effectively
+    resets to zero and races again. This is what stops a sibling with a
+    months-long head start from permanently dominating.
+
+    Siblings are flagged is_sibling=True for visual distinction. Legacy
+    Max-only fields kept populated for back-compat."""
     rivals = db.query(MaxRival).order_by(MaxRival.id).all()
     # Resolve the requesting child + Progress
     if child_id is None:
@@ -151,12 +204,14 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
         child_id = prog.child_id if prog else None
     else:
         prog = db.query(Progress).filter_by(child_id=child_id).first()
-    child_xp = prog.total_xp if prog else 0
+    child_xp = prog.total_xp if prog else 0                       # cumulative (legacy field)
+    child_weekly = _weekly_xp_for_child(db, child_id) if child_id else 0  # used for ranking
 
     rows = [{
         "name": "You",
         "avatar": "🧑",
-        "xp": child_xp,
+        "xp": child_weekly,
+        "total_xp": child_xp,
         "is_child": True,
         "is_sibling": False,
         "personality": None,
@@ -172,7 +227,8 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
             rows.append({
                 "name": sib.name,
                 "avatar": "🧒",
-                "xp": sp.total_xp if sp else 0,
+                "xp": _weekly_xp_for_child(db, sib.id),
+                "total_xp": sp.total_xp if sp else 0,
                 "is_child": False,
                 "is_sibling": True,
                 "personality": "sibling",
@@ -184,7 +240,8 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
         rows.append({
             "name": mr.name,
             "avatar": mr.avatar,
-            "xp": mr.current_xp,
+            "xp": _weekly_xp_for_rival(mr),
+            "total_xp": mr.current_xp,
             "is_child": False,
             "is_sibling": False,
             "personality": mr.personality,
@@ -195,7 +252,9 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
     for i, r in enumerate(rows, start=1):
         r["rank"] = i
 
-    action_hint = _action_hint(child_xp, rows)
+    # Action hint is gap-to-next based on WEEKLY xp (matching the leaderboard
+    # ordering), so the "do X more quests" advice is achievable in-week.
+    action_hint = _action_hint(child_weekly, rows)
 
     # Legacy Max-only block for back-compat with existing RivalWidget.
     max_row = next((mr for mr in rivals if mr.name == "Max"), None)
@@ -204,6 +263,8 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
             "leaderboard": rows,
             "child_position": next(r["rank"] for r in rows if r["is_child"]),
             "action_hint": action_hint,
+            "period": "weekly",
+            "week_start": _week_start_iso(),
             "max_xp": 0, "child_xp": child_xp, "gap": -child_xp,
             "child_ahead": True, "trend": "neutral", "lead_or_deficit": child_xp,
         }
@@ -224,6 +285,8 @@ def get_state(db: Session, child_id: int | None = None) -> dict:
         "leaderboard": rows,
         "child_position": next(r["rank"] for r in rows if r["is_child"]),
         "action_hint": action_hint,
+        "period": "weekly",
+        "week_start": _week_start_iso(),
         # Legacy Max-only fields (existing UI continues to render):
         "max_xp": max_row.current_xp,
         "child_xp": child_xp,

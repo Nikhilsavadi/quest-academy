@@ -24,11 +24,12 @@ def child_enter(body: ChildEntryIn, db: Session = Depends(get_db)):
     if not name_raw:
         raise HTTPException(400, "Name required")
 
-    allowed = settings.allowed_children_list
+    allowed_dict = settings.allowed_children_dict  # {name: year_level}
     # Case-insensitive match — display the canonical casing from the allowlist
-    canonical = next((a for a in allowed if a.lower() == name_raw.lower()), None)
+    canonical = next((a for a in allowed_dict if a.lower() == name_raw.lower()), None)
     if canonical is None:
         raise HTTPException(403, "That name isn't on the list. Ask whoever sent you the link.")
+    desired_year = allowed_dict[canonical]
 
     # find-or-create child user, keyed by synthetic email derived from name
     synth_email = child_email_for(canonical)
@@ -41,6 +42,7 @@ def child_enter(body: ChildEntryIn, db: Session = Depends(get_db)):
         user = User(
             email=synth_email, name=canonical, role="child", password_hash="",
             parent_id=parent.id if parent else None,
+            year_level=desired_year,
         )
         db.add(user); db.commit(); db.refresh(user)
         created = True
@@ -56,6 +58,12 @@ def child_enter(body: ChildEntryIn, db: Session = Depends(get_db)):
         if parent:
             user.parent_id = parent.id
             db.commit()
+
+    # Keep year_level synced with the allowlist (so editing the env var is
+    # enough to reclassify a kid — no DB poke needed).
+    if user.year_level != desired_year:
+        user.year_level = desired_year
+        db.commit()
 
     # bootstrap supporting rows on first entry (idempotent — safe to repeat)
     if created:

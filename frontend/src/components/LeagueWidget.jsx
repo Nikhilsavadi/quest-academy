@@ -5,7 +5,10 @@ export default function LeagueWidget({ rival }) {
 
   return (
     <div className="card mb-3 bg-slate-900 text-white">
-      <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">⚔️ The League</p>
+      <div className="flex items-baseline justify-between mb-2">
+        <p className="text-xs uppercase tracking-wide text-slate-400">⚔️ The League</p>
+        <p className="text-[10px] uppercase tracking-wide text-slate-500">This week — resets Mon</p>
+      </div>
       <div className="space-y-1.5 mb-3">
         {board.map(row => (
           <LeagueRow key={row.name} row={row} />
@@ -42,7 +45,12 @@ function LeagueRow({ row }) {
         {isSibling && <span className="text-[10px] text-rose-200 uppercase font-bold">sibling</span>}
         {row.surge_active && <span className="text-xs text-amber-300">🔥 surge</span>}
       </div>
-      <span className="font-mono text-sm font-bold">{row.xp.toLocaleString()} XP</span>
+      <div className="flex flex-col items-end shrink-0">
+        <span className="font-mono text-sm font-bold">{row.xp.toLocaleString()} XP</span>
+        {row.total_xp != null && row.total_xp !== row.xp && (
+          <span className="text-[9px] text-slate-500 font-mono">{row.total_xp.toLocaleString()} all-time</span>
+        )}
+      </div>
     </div>
   )
 }

@@ -15,6 +15,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20))  # parent | child
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # UK school year (3 = age 7-8, 4 = age 8-9, 5 = age 9-10, …). Drives the
+    # difficulty floor so an older sibling never gets Year-3-easy questions
+    # even on a fresh topic.
+    year_level: Mapped[int] = mapped_column(Integer, default=3)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

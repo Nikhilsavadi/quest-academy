@@ -220,7 +220,9 @@ def extra_quest(child: User = Depends(get_only_child), db: DB = Depends(get_db))
     subject = subject_for_date(today)
     topic = _pick_topic(db, child.id, subject)
     tm = db.query(TopicMastery).filter_by(child_id=child.id, subject=subject, topic=topic).first()
-    difficulty = tm.current_difficulty if tm else "starter"
+    from progression_engine import difficulty_floor_for_year, apply_floor
+    floor = difficulty_floor_for_year(child.year_level)
+    difficulty = apply_floor(tm.current_difficulty if tm else "starter", floor)
 
     sess = DBSession(
         child_id=child.id, subject=subject, difficulty=difficulty,
@@ -761,8 +763,12 @@ def weak_spot_quest(child: User = Depends(get_only_child), db: DB = Depends(get_
     if used + questions_count > cap:
         raise HTTPException(429, "You've smashed today's question limit — come back tomorrow!")
 
-    # Drop one difficulty tier to give them a warm-up if they've been struggling
+    # Drop one difficulty tier to give them a warm-up if they've been struggling,
+    # but never below the child's year-level floor.
+    from progression_engine import difficulty_floor_for_year, apply_floor
+    floor = difficulty_floor_for_year(child.year_level)
     softer = {"olympiad": "challenge", "challenge": "starter", "starter": "starter"}.get(target["difficulty"], "starter")
+    softer = apply_floor(softer, floor)
 
     sess = DBSession(
         child_id=child.id, subject=target["subject"], difficulty=softer,

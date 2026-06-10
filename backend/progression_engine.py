@@ -26,6 +26,23 @@ def _prev(diff: str) -> str | None:
     return DIFFICULTY_ORDER[i - 1] if i - 1 >= 0 else None
 
 
+def difficulty_floor_for_year(year_level: int) -> str:
+    """Older kids never drop below an age-appropriate floor.
+    Year 3 → starter, Year 4 → challenge, Year 5+ → olympiad."""
+    if year_level >= 5:
+        return "olympiad"
+    if year_level >= 4:
+        return "challenge"
+    return "starter"
+
+
+def apply_floor(difficulty: str, floor: str) -> str:
+    """Return the higher of (current difficulty, year floor)."""
+    di = DIFFICULTY_ORDER.index(difficulty) if difficulty in DIFFICULTY_ORDER else 0
+    fi = DIFFICULTY_ORDER.index(floor) if floor in DIFFICULTY_ORDER else 0
+    return DIFFICULTY_ORDER[max(di, fi)]
+
+
 def run(db: Session, child_id: int, session_id: int) -> list[dict]:
     """Update topic_mastery and auto-promote/demote.
 
@@ -93,7 +110,10 @@ def run(db: Session, child_id: int, session_id: int) -> list[dict]:
                 ev = _apply_change(db, child_id, row, target, "promoted")
                 events.append(ev)
 
-        # Auto-demote: <60% over the last 5 answers on this topic (struggling)
+        # Auto-demote: <60% over the last 5 answers on this topic (struggling).
+        # But never below the child's year-level floor — a Year-4 child
+        # shouldn't get demoted to starter just because they had a rough
+        # 5-question run.
         elif (
             row.current_difficulty != "starter"
             and len(latest5) >= 5
@@ -101,8 +121,12 @@ def run(db: Session, child_id: int, session_id: int) -> list[dict]:
         ):
             target = _prev(row.current_difficulty)
             if target:
-                ev = _apply_change(db, child_id, row, target, "demoted")
-                events.append(ev)
+                child = db.get(User, child_id)
+                floor = difficulty_floor_for_year(child.year_level if child else 3)
+                target = apply_floor(target, floor)
+                if target != row.current_difficulty:
+                    ev = _apply_change(db, child_id, row, target, "demoted")
+                    events.append(ev)
 
     db.commit()
     return events

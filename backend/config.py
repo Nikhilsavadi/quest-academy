@@ -20,14 +20,32 @@ class Settings(BaseSettings):
     CHILD_NAME: str = "Samihan"
     CHILD_EMAIL: str = "child@quest-academy.app"
 
-    # Comma-separated list of allowed child names (case-insensitive).
-    # Children enter by typing their name only; any name on this list creates
-    # or recovers their user row. Edit via Railway env var to add/remove.
+    # Comma-separated allowlist. Each entry is `Name` or `Name:year_level`,
+    # e.g. "Samihan:3,Anvi:4". year_level drives the difficulty floor so an
+    # older sibling never gets baby-easy questions. Bare name defaults to
+    # Year 3 for backward compatibility.
     ALLOWED_CHILDREN: str = "Samihan"
 
     @property
     def allowed_children_list(self) -> list[str]:
-        return [n.strip() for n in self.ALLOWED_CHILDREN.split(",") if n.strip()]
+        return [name for name, _ in self.allowed_children_dict.items()]
+
+    @property
+    def allowed_children_dict(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for entry in self.ALLOWED_CHILDREN.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                name, raw = entry.split(":", 1)
+                try:
+                    out[name.strip()] = int(raw.strip())
+                except ValueError:
+                    out[name.strip()] = 3
+            else:
+                out[entry] = 3
+        return out
 
 
 settings = Settings()

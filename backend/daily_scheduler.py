@@ -54,9 +54,13 @@ def ensure_daily_quest(db: Session, child_id: int, on_date: date | None = None) 
     subject = subject_for_date(on_date)
     # Pick a topic — weakest with attempts, else first unseen, else first topic
     topic = _pick_topic(db, child_id, subject)
-    # Difficulty = current_difficulty for that topic
+    # Difficulty = max(current_difficulty for that topic, year-level floor).
+    # Older sibling never gets baby-easy questions even on fresh topics.
+    from progression_engine import difficulty_floor_for_year, apply_floor
     tm = db.query(TopicMastery).filter_by(child_id=child_id, subject=subject, topic=topic).first()
-    difficulty = tm.current_difficulty if tm else "starter"
+    child = db.get(User, child_id)
+    floor = difficulty_floor_for_year(child.year_level if child else 3)
+    difficulty = apply_floor(tm.current_difficulty if tm else "starter", floor)
     learn_mode = tm is not None and not tm.learn_mode_seen and tm.attempts == 0
 
     sess = DBSession(
