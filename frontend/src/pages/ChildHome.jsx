@@ -111,7 +111,7 @@ export default function ChildHome() {
         {beltExamReady && (
           <div className="card mb-3 bg-yellow-50 border-2 border-yellow-400">
             <p className="font-bold text-lg">⚔️ BELT EXAM READY!</p>
-            <p className="text-sm text-slate-600 mb-2">A parent will start it from their dashboard.</p>
+            <p className="text-sm text-slate-600 mb-2">Tap below when you're ready — no rush, no parent needed.</p>
             <button onClick={startBeltExam} className="btn btn-primary w-full text-lg animate-pulse">⚔️ START EXAM</button>
           </div>
         )}

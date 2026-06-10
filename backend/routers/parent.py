@@ -266,41 +266,58 @@ def _materialise_questions(db: DB, sess: DBSession, child_id: int, learn_mode: b
 
 
 def _belt_exam_questions(db: DB, child_id: int, sess: DBSession) -> list[dict]:
-    """Mix subjects for belt exam based on belt level."""
+    """Belt exam questions. v1 is Maths-only — the original plan tried to
+    generate NVR + VR sections via AI too, which (a) takes 60-90s in series
+    because each subject is a separate Anthropic call, and (b) v1's NVR/VR
+    generation has known visual-vs-logic mismatch bugs (see project memory
+    `project_quest_academy_maths_only_2026_05_15`).
+
+    Until NVR + VR are re-enabled with deterministic generators, the exam
+    pulls Maths questions across the four deterministic topics so it's both
+    fast (no AI) and varied."""
     bp = db.query(BeltProgress).filter_by(child_id=child_id).first()
     target = bp.exam_unlocked_belt or (bp.current_belt + 1)
-    # (maths, nvr, vr, diff_mix) per belt
+    # (total_questions, difficulty mix) per belt — was three subjects, now Maths only
     plan = {
-        1: (5, 5, 5, [("starter", 1.0)]),
-        2: (7, 7, 6, [("starter", 0.3), ("challenge", 0.7)]),
-        3: (9, 8, 8, [("challenge", 0.5), ("olympiad", 0.5)]),
-        4: (11, 10, 9, [("challenge", 0.3), ("olympiad", 0.7)]),
-        5: (11, 10, 9, [("olympiad", 1.0)]),
-    }.get(target, (5, 5, 5, [("starter", 1.0)]))
-    m_count, n_count, v_count, mix = plan
+        1: (15, [("starter", 1.0)]),
+        2: (20, [("starter", 0.3), ("challenge", 0.7)]),
+        3: (25, [("challenge", 0.5), ("olympiad", 0.5)]),
+        4: (30, [("challenge", 0.3), ("olympiad", 0.7)]),
+        5: (30, [("olympiad", 1.0)]),
+        6: (30, [("olympiad", 1.0)]),
+        7: (30, [("olympiad", 1.0)]),
+        8: (30, [("olympiad", 1.0)]),
+    }.get(target, (15, [("starter", 1.0)]))
+    total_count, mix = plan
+
+    # Deterministic Maths topics; rotate through them for variety.
+    DET_TOPICS = ["Mental Arithmetic", "Times & Division Mix", "Division 2÷1", "Division 3÷1"]
+    from deterministic_questions import generate as _det
+
     out: list[dict] = []
+    per_diff: list[tuple[str, int]] = []
+    remaining = total_count
+    for diff, frac in mix[:-1]:
+        n = max(1, int(round(total_count * frac)))
+        per_diff.append((diff, n))
+        remaining -= n
+    per_diff.append((mix[-1][0], remaining))
 
-    def gen(subj: str, count: int):
-        per_diff: list[tuple[str, int]] = []
-        remaining = count
-        for diff, frac in mix[:-1]:
-            n = max(1, int(round(count * frac)))
-            per_diff.append((diff, n))
-            remaining -= n
-        per_diff.append((mix[-1][0], remaining))
-        for diff, n in per_diff:
-            if n <= 0:
+    for diff, n in per_diff:
+        if n <= 0:
+            continue
+        # Spread n questions across the deterministic topics — gives the
+        # exam genuine breadth (multiplication, division, mental arithmetic)
+        # instead of 30 of the same flavour.
+        per_topic = max(1, n // len(DET_TOPICS))
+        leftover = n - per_topic * len(DET_TOPICS)
+        for i, topic in enumerate(DET_TOPICS):
+            count = per_topic + (1 if i < leftover else 0)
+            if count <= 0:
                 continue
-            topic = mastery_context.TOPICS[subj][0]
-            ctx = mastery_context.build_context(db, child_id, subj, topic)
-            out.extend(ai.generate_questions(
-                count=n, subject=subj, topic=topic,
-                difficulty=diff, mastery_context=ctx, learn_mode=False,
-            ))
-
-    gen("Maths", m_count)
-    gen("NVR", n_count)
-    gen("VR", v_count)
+            qs = _det(topic, count, difficulty=diff)
+            if qs:
+                out.extend(qs)
     return out
 
 
